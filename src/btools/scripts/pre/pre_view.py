@@ -55,6 +55,9 @@ class ViewConfig:
         self.ellipsis_string = os.getenv("VIEW_ELLIPSIS_STRING", "...")
         self.null_display_style = os.getenv("VIEW_NULL_DISPLAY_STYLE", "dim red")
 
+        # TOML output settings
+        self.out_unique_max = int(os.getenv("VIEW_OUT_UNIQUE_MAX", "20"))
+
 
 class PreViewData:
     """Class for quickly viewing and profiling datasets using Polars.
@@ -562,17 +565,32 @@ class PreViewData:
                 columns_with_missing.append(col_name)
                 total_missing += null_count
 
-            col_info = {
+            col_info: dict[str, Any] = {
                 "dtype": str(col_data.dtype),
                 "non_null_count": df.height - null_count,
                 "null_count": null_count,
                 "null_percentage": (null_count / df.height * 100) if df.height > 0 else 0,
                 "unique_count": None,
                 "memory_usage": None,
+                "unique_values": None,
             }
 
             with contextlib.suppress(AttributeError, ValueError):
-                col_info["unique_count"] = col_data.n_unique()
+                unique_count = col_data.n_unique()
+                col_info["unique_count"] = unique_count
+
+                # Include unique values if count is within threshold
+                if unique_count <= self.config.out_unique_max:
+                    try:
+                        # Get unique values, excluding nulls, and convert to Python types
+                        unique_vals = col_data.drop_nulls().unique().to_list()
+                        # Sort the values if possible for consistent output
+                        with contextlib.suppress(TypeError):
+                            unique_vals.sort()
+                        col_info["unique_values"] = unique_vals
+                    except (AttributeError, ValueError, TypeError):
+                        # If we can't get unique values for some reason, leave as None
+                        pass
 
             # Add statistics for numeric columns
             numeric_dtypes = {
