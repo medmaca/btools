@@ -5,7 +5,10 @@ description = "Package for bioinformatics tools"
 readme = "README.md"
 authors = [{ name = "medmaca", email = "matthew.care@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = ["click>=8.2.1"]
+dependencies = [
+    "click>=8.2.1",
+ "pandas>=2.0.0",
+]
 
 [project.scripts]
 btools = "btools.cli:cli"

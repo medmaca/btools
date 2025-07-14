@@ -2,11 +2,9 @@
 
 import click
 
-from btools.cli.cli_commands import rand_gen
+from btools.cli.cli_commands import pre_group
 
 # see https://click.palletsprojects.com/en/stable/commands-and-groups/#group-invocation-without-command
-
-print("HELLO FROM BTOOLS CLI")
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
@@ -21,7 +19,4 @@ def cli(ctx: click.Context):
 
 
 # Register commands
-cli.add_command(rand_gen)
-cli.add_command(rand_gen)
-cli.add_command(rand_gen)
-cli.add_command(rand_gen)
+cli.add_command(pre_group, name="pre")
