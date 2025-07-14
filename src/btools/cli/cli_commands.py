@@ -32,6 +32,7 @@ def rand_gen(count: int):
 @click.option("--row-index", "--ri", default=0, help="Row to use as column header (zero-based, default: 0)")
 @click.option("--row-start", "--rs", default=1, help="Row from which to start outputting data (zero-based, default: 1)")
 @click.option("--sep", "-s", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
+@click.option("--sheet", help="Sheet name or number to read from Excel files (default: first sheet)")
 def select_data(
     input_file: str,
     output: str | None,
@@ -40,6 +41,7 @@ def select_data(
     row_index: int,
     row_start: int,
     sep: str | None,
+    sheet: str | None,
 ):
     """Select a subset of data from an input file and save as CSV.
 
@@ -49,6 +51,9 @@ def select_data(
     By default, the output file will be named with the input filename plus '_subset.csv' suffix.
     For example, 'data.xlsx' will output to 'data_subset.csv'.
 
+    For Excel files, you can specify which sheet to read using the --sheet option.
+    This accepts either a sheet name (e.g., "Sheet2") or a sheet index (e.g., "1" for the second sheet).
+
     Example usage:
     \b
     # Basic usage with defaults (outputs to input_subset.csv)
@@ -56,6 +61,12 @@ def select_data(
 
     # Select data starting from column 2, using row 1 as headers
     btools pre select_data input.xlsx --data-start-col 2 --row-index 1
+
+    # Specify a specific Excel sheet by name
+    btools pre select_data workbook.xlsx --sheet "Data Sheet" --output results.csv
+
+    # Specify a specific Excel sheet by index (0-based)
+    btools pre select_data workbook.xlsx --sheet 1 --output results.csv
 
     # Specify custom output file and parameters
     btools pre select_data data.tsv --output subset.csv --index-col 1 --row-start 2
@@ -72,6 +83,7 @@ def select_data(
             row_index=row_index,
             row_start=row_start,
             sep=sep,
+            sheet=sheet,
         )
         processor.process()
     except Exception as e:
