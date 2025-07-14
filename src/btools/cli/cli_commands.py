@@ -25,11 +25,13 @@ def rand_gen(count: int):
 @pre_group.command("select_data")
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--output", "-o", help="Output CSV file path (defaults to input file with '_subset.csv' suffix)")
-@click.option("--index-col", default=0, help="Column to use as row index (zero-based, default: 0)")
-@click.option("--data-start-col", default=1, help="Column from which to start outputting data (zero-based, default: 1)")
-@click.option("--row-index", default=0, help="Row to use as column header (zero-based, default: 0)")
-@click.option("--row-start", default=1, help="Row from which to start outputting data (zero-based, default: 1)")
-@click.option("--sep", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
+@click.option("--index-col", "-i", default=0, help="Column to use as row index (zero-based, default: 0)")
+@click.option(
+    "--data-start-col", "-d", default=1, help="Column from which to start outputting data (zero-based, default: 1)"
+)
+@click.option("--row-index", "--ri", default=0, help="Row to use as column header (zero-based, default: 0)")
+@click.option("--row-start", "--rs", default=1, help="Row from which to start outputting data (zero-based, default: 1)")
+@click.option("--sep", "-s", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
 def select_data(
     input_file: str,
     output: str | None,

@@ -63,6 +63,10 @@ class PreSelectData:
         try:
             # If a custom separator is provided, use it for CSV-like files
             if self.sep is not None:
+                if self.sep == "\\t":
+                    print(f"\tReading TSV file: {self.input_file}")
+                    return pd.read_csv(self.input_file, sep="\t", header=None)
+                print(f"\tReading file with custom separator:({self.sep})")
                 return pd.read_csv(self.input_file, sep=self.sep, header=None)
 
             # Otherwise, auto-detect format based on extension
@@ -139,7 +143,6 @@ class PreSelectData:
         print(f"Saving to: {self.output_file}")
 
         # Save to CSV file
-        print(f"HERE: {selected_df}")
         selected_df.to_csv(self.output_file)
 
         print("Processing completed successfully!")
