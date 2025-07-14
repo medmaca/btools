@@ -97,6 +97,7 @@ class PreSelectDataPolars:
             raise FileNotFoundError(f"Input file not found: {self.input_file}")
 
         try:
+            df: pl.DataFrame
             # If a custom separator is provided, use it for CSV-like files
             if self.sep is not None:
                 if self.sep == "\\t":
@@ -118,8 +119,8 @@ class PreSelectDataPolars:
                         print(f"\tReading Excel file: {self.input_file}, sheet: {self.sheet}")
                     else:
                         print(f"\tReading Excel file: {self.input_file}")
-                    pandas_df = pd.read_excel(self.input_file, sheet_name=sheet_name, header=None)  # type: ignore[call-overload]
-                    df = pl.from_pandas(pandas_df)
+                    df = pl.read_excel(self.input_file, sheet_name=sheet_name, has_header=False)
+
                 elif file_extension == ".tsv":
                     df = pl.read_csv(self.input_file, separator="\t", has_header=False)
                 else:
@@ -223,8 +224,9 @@ class PreSelectDataPolars:
         print(f"  - Row start: {self.row_start}")
 
         selected_df = self._select_subset(df)
+        shape_a, shape_b = selected_df.shape
 
-        print(f"Selected data shape: {selected_df.shape}")
+        print(f"Selected data shape: {shape_a},{shape_b - 1}")
         print(f"Saving to: {self.output_file}")
 
         # Save to CSV file using Polars
