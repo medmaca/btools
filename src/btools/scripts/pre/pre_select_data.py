@@ -175,19 +175,39 @@ class PreSelectDataPolars:
 
         If GZIP_OUT environment variable is True, adds .gz extension.
         """
-        base_name = self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+        # Get the true base name, removing any file extensions (.csv, .tsv, .gz, etc.)
+        # For example: "file.tsv.gz" -> "file", "file.csv" -> "file"
+        if _is_gzipped(self.input_file):
+            # For gzipped files, remove both .gz and the inner extension
+            base_stem = self.input_file.name
+            for suffix in self.input_file.suffixes:
+                base_stem = base_stem.replace(suffix, "")
+        else:
+            # For non-gzipped files, just remove the extension
+            base_stem = self.input_file.stem
+
+        base_name = self.input_file.with_name(base_stem + "_subset").with_suffix(".csv")
         if _should_write_gzipped():
             return base_name.with_suffix(".csv.gz")
         return base_name
 
     def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
         """Update output filename to include range information."""
-        stem = output_file.stem
         range_suffix = self._generate_range_suffix(num_rows, num_cols)
 
-        # Insert range suffix before any existing suffix
-        new_stem = stem + range_suffix
-        return output_file.with_stem(new_stem)
+        # Handle .csv.gz files specially
+        if output_file.suffixes == [".csv", ".gz"]:
+            # For .csv.gz files, we want: name_subset_rowX_colY.csv.gz
+            # Current stem is: name_subset.csv
+            # We want to insert range before .csv: name_subset_rowX_colY.csv
+            base_stem = output_file.stem[:-4]  # Remove '.csv' from stem
+            new_stem = base_stem + range_suffix + ".csv"
+            return output_file.with_stem(new_stem)
+        else:
+            # For regular files, just append to stem
+            stem = output_file.stem
+            new_stem = stem + range_suffix
+            return output_file.with_stem(new_stem)
 
     def _read_data(self) -> pl.DataFrame:
         """Read data from the input file using Polars.
@@ -543,19 +563,39 @@ class PreSelectData:
 
         If GZIP_OUT environment variable is True, adds .gz extension.
         """
-        base_name = self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+        # Get the true base name, removing any file extensions (.csv, .tsv, .gz, etc.)
+        # For example: "file.tsv.gz" -> "file", "file.csv" -> "file"
+        if _is_gzipped(self.input_file):
+            # For gzipped files, remove both .gz and the inner extension
+            base_stem = self.input_file.name
+            for suffix in self.input_file.suffixes:
+                base_stem = base_stem.replace(suffix, "")
+        else:
+            # For non-gzipped files, just remove the extension
+            base_stem = self.input_file.stem
+
+        base_name = self.input_file.with_name(base_stem + "_subset").with_suffix(".csv")
         if _should_write_gzipped():
             return base_name.with_suffix(".csv.gz")
         return base_name
 
     def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
         """Update output filename to include range information."""
-        stem = output_file.stem
         range_suffix = self._generate_range_suffix(num_rows, num_cols)
 
-        # Insert range suffix before any existing suffix
-        new_stem = stem + range_suffix
-        return output_file.with_stem(new_stem)
+        # Handle .csv.gz files specially
+        if output_file.suffixes == [".csv", ".gz"]:
+            # For .csv.gz files, we want: name_subset_rowX_colY.csv.gz
+            # Current stem is: name_subset.csv
+            # We want to insert range before .csv: name_subset_rowX_colY.csv
+            base_stem = output_file.stem[:-4]  # Remove '.csv' from stem
+            new_stem = base_stem + range_suffix + ".csv"
+            return output_file.with_stem(new_stem)
+        else:
+            # For regular files, just append to stem
+            stem = output_file.stem
+            new_stem = stem + range_suffix
+            return output_file.with_stem(new_stem)
 
     def _read_data(self) -> pd.DataFrame:  # type: ignore[type-arg]
         """Read data from the input file.
