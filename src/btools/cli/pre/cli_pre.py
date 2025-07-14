@@ -12,20 +12,17 @@ def pre_group():
     """Pre-processing commands."""
 
 
-# Random number generation command
-@pre_group.command("random_num")
-@click.option("--count", "-c", default=10, help="Number of random numbers to generate.")
-def rand_gen(count: int):
-    """Generate a list of random numbers using the generate_random_numbers function."""
-    generate_random_numbers(count)
-    generate_random_numbers(count)
-
-
 # Data selection command
 @pre_group.command("select_data")
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--output", "-o", help="Output CSV file path (defaults to input file with '_subset.csv' suffix)")
-@click.option("--index-col", "-i", default=0, help="Column to use as row index (zero-based, default: 0)")
+@click.option(
+    "--index-col",
+    "-i",
+    default="0",
+    help="Column(s) to use as row index. Single integer (e.g., 0) or comma-separated integers "
+    + "(e.g., '1,2,4') for concatenated index (default: 0)",
+)
 @click.option(
     "--data-start-col", "-d", default=1, help="Column from which to start outputting data (zero-based, default: 1)"
 )
@@ -33,15 +30,19 @@ def rand_gen(count: int):
 @click.option("--row-start", "--rs", default=1, help="Row from which to start outputting data (zero-based, default: 1)")
 @click.option("--sep", "-s", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
 @click.option("--sheet", help="Sheet name or number to read from Excel files (default: first sheet)")
+@click.option(
+    "--index-separator", default="#", help="Separator to use when concatenating multiple index columns (default: '#')"
+)
 def select_data(
     input_file: str,
     output: str | None,
-    index_col: int,
+    index_col: str,
     data_start_col: int,
     row_index: int,
     row_start: int,
     sep: str | None,
     sheet: str | None,
+    index_separator: str,
 ):
     """Select a subset of data from an input file and save as CSV.
 
@@ -54,6 +55,9 @@ def select_data(
     For Excel files, you can specify which sheet to read using the --sheet option.
     This accepts either a sheet name (e.g., "Sheet2") or a sheet index (e.g., "1" for the second sheet).
 
+    The --index-col option supports multiple columns for creating concatenated indices.
+    Use comma-separated column numbers (e.g., "1,2,4") to combine values from multiple columns.
+
     Example usage:
     \b
     # Basic usage with defaults (outputs to input_subset.csv)
@@ -61,6 +65,9 @@ def select_data(
 
     # Select data starting from column 2, using row 1 as headers
     btools pre select_data input.xlsx --data-start-col 2 --row-index 1
+
+    # Use multiple columns (1,2,4) for index, separated by '#'
+    btools pre select_data input.csv --index-col "1,2,4" --index-separator "#"
 
     # Specify a specific Excel sheet by name
     btools pre select_data workbook.xlsx --sheet "Data Sheet" --output results.csv
@@ -75,15 +82,19 @@ def select_data(
     btools pre select_data data.txt --sep "|" --output result.csv
     """
     try:
+        # Convert index_col to int if it's a single number, otherwise keep as string
+        parsed_index_col = int(index_col) if "," not in index_col else index_col
+
         processor = PreSelectData(
             input_file=input_file,
             output_file=output,
-            index_col=index_col,
+            index_col=parsed_index_col,
             data_start_col=data_start_col,
             row_index=row_index,
             row_start=row_start,
             sep=sep,
             sheet=sheet,
+            index_separator=index_separator,
         )
         processor.process()
     except Exception as e:

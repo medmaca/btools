@@ -18,24 +18,27 @@ class PreSelectData:
         self,
         input_file: str,
         output_file: str | None = None,
-        index_col: int = 0,
+        index_col: int | str = 0,
         data_start_col: int = 1,
         row_index: int = 0,
         row_start: int = 1,
         sep: str | None = None,
         sheet: str | None = None,
+        index_separator: str = "#",
     ):
         """Initialize the PreSelectData class.
 
         Args:
             input_file: Path to the input data file
             output_file: Path to the output CSV file (defaults to input_file with "_subset.csv" suffix)
-            index_col: Column to use as row index (default: 0)
+            index_col: Column(s) to use as row index. Can be a single integer (e.g., 0) or
+                      comma-separated string of integers (e.g., "1,2,4") for concatenated index (default: 0)
             data_start_col: Column from which to start outputting data (default: 1)
             row_index: Row to use as column header (default: 0)
             row_start: Row from which to start outputting data (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
             sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
+            index_separator: Separator to use when concatenating multiple index columns (default: "#")
         """
         self.input_file = Path(input_file)
         self.output_file = Path(output_file) if output_file else self._generate_output_filename()
@@ -45,6 +48,23 @@ class PreSelectData:
         self.row_start = row_start
         self.sep = sep
         self.sheet = sheet
+        self.index_separator = index_separator
+
+    def _parse_index_columns(self) -> list[int]:
+        """Parse index_col parameter into a list of integers.
+
+        Returns:
+            List of column indices to use for row index
+        """
+        if isinstance(self.index_col, int):
+            return [self.index_col]
+        else:  # str case
+            try:
+                return [int(x.strip()) for x in self.index_col.split(",")]
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid index_col format '{self.index_col}'. Use comma-separated integers like '1,2,4'"
+                ) from e
 
     def _generate_output_filename(self) -> Path:
         """Generate output filename based on input filename."""
@@ -114,11 +134,15 @@ class PreSelectData:
             DataFrame containing the selected subset
         """
         # Validate parameters
+        index_columns_list = self._parse_index_columns()
+
+        # Check all index columns are within bounds
+        for col_idx in index_columns_list:
+            if col_idx >= len(df.columns):
+                raise ValueError(f"index_col ({col_idx}) is out of bounds. DataFrame has {len(df.columns)} columns.")
+
         if self.row_index >= len(df):
             raise ValueError(f"row_index ({self.row_index}) is out of bounds. DataFrame has {len(df)} rows.")
-
-        if self.index_col >= len(df.columns):
-            raise ValueError(f"index_col ({self.index_col}) is out of bounds. DataFrame has {len(df.columns)} columns.")
 
         if self.data_start_col >= len(df.columns):
             raise ValueError(
@@ -130,10 +154,24 @@ class PreSelectData:
 
         # Extract column headers from the specified row
         column_headers: list[Any] = df.iloc[self.row_index, self.data_start_col :].tolist()  # type: ignore[attr-defined]
-        index_name: Any = df.iloc[self.row_index, self.index_col]  # type: ignore[assignment]
 
-        # Extract row indices from the specified column
-        row_indices: list[Any] = df.iloc[self.row_start :, self.index_col].tolist()  # type: ignore[attr-defined]
+        # Extract index name(s) - concatenate if multiple columns
+        if len(index_columns_list) == 1:
+            index_name: Any = df.iloc[self.row_index, index_columns_list[0]]  # type: ignore[assignment]
+        else:
+            index_parts = [str(df.iloc[self.row_index, col]) for col in index_columns_list]  # type: ignore[index]
+            index_name = self.index_separator.join(index_parts)
+
+        # Extract row indices from the specified column(s) - concatenate if multiple columns
+        if len(index_columns_list) == 1:
+            row_indices: list[Any] = df.iloc[self.row_start :, index_columns_list[0]].tolist()  # type: ignore[attr-defined]
+        else:
+            # Create concatenated index from multiple columns
+            row_data = df.iloc[self.row_start :, index_columns_list]  # type: ignore[assignment]
+            row_indices = [
+                self.index_separator.join(str(val) for val in row)  # type: ignore[var-annotated]
+                for row in row_data.values  # type: ignore[attr-defined]
+            ]
 
         # Extract the data subset
         data_subset: Any = df.iloc[self.row_start :, self.data_start_col :]  # type: ignore[assignment]
@@ -186,6 +224,7 @@ class PreSelectData:
             "row_start": self.row_start,
             "sep": self.sep,
             "sheet": self.sheet,
+            "index_separator": self.index_separator,
         }
 
 

@@ -2,7 +2,7 @@
 
 import click
 
-from btools.cli.cli_commands import pre_group
+from btools.cli.pre.cli_pre import pre_group
 
 # see https://click.palletsprojects.com/en/stable/commands-and-groups/#group-invocation-without-command
 
