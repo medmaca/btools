@@ -21,7 +21,7 @@ class PreSelectDataPolars:
         input_file: str,
         output_file: str | None = None,
         index_col: int | str = 0,
-        data_start_col: int = 1,
+        col_start: int = 1,
         row_index: int = 0,
         row_start: int = 1,
         sep: str | None = None,
@@ -35,7 +35,7 @@ class PreSelectDataPolars:
             output_file: Path to the output CSV file (defaults to input_file with "_subset.csv" suffix)
             index_col: Column(s) to use as row index. Can be a single integer (e.g., 0) or
                       comma-separated string of integers (e.g., "1,2,4") for concatenated index (default: 0)
-            data_start_col: Column from which to start outputting data (default: 1)
+            col_start: Column from which to start outputting data (default: 1)
             row_index: Row to use as column header (default: 0)
             row_start: Row from which to start outputting data (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
@@ -45,7 +45,7 @@ class PreSelectDataPolars:
         self.input_file = Path(input_file)
         self.output_file = Path(output_file) if output_file else self._generate_output_filename()
         self.index_col = index_col
-        self.data_start_col = data_start_col
+        self.col_start = col_start
         self.row_index = row_index
         self.row_start = row_start
         self.sep = sep
@@ -156,8 +156,8 @@ class PreSelectDataPolars:
         if self.row_index >= df.height:
             raise ValueError(f"row_index ({self.row_index}) is out of bounds. DataFrame has {df.height} rows.")
 
-        if self.data_start_col >= df.width:
-            raise ValueError(f"data_start_col ({self.data_start_col}) is out of bounds. DataFrame has {df.width} columns.")
+        if self.col_start >= df.width:
+            raise ValueError(f"col_start ({self.col_start}) is out of bounds. DataFrame has {df.width} columns.")
 
         if self.row_start >= df.height:
             raise ValueError(f"row_start ({self.row_start}) is out of bounds. DataFrame has {df.height} rows.")
@@ -165,7 +165,7 @@ class PreSelectDataPolars:
         # Extract column headers from the specified row
         header_row = df.slice(self.row_index, 1)
         # Polars uses column_1, column_2, etc. when has_header=False (1-indexed)
-        header_cols = [pl.col(f"column_{i + 1}") for i in range(self.data_start_col, df.width)]
+        header_cols = [pl.col(f"column_{i + 1}") for i in range(self.col_start, df.width)]
         column_headers = [str(val) for val in header_row.select(header_cols).row(0)]
 
         # Extract index name(s) - concatenate if multiple columns
@@ -189,8 +189,8 @@ class PreSelectDataPolars:
             for row in data_rows.select(index_cols).iter_rows():
                 row_indices.append(self.index_separator.join(str(val) for val in row))
 
-        # Extract the data subset (columns from data_start_col onwards)
-        data_columns = [f"column_{i + 1}" for i in range(self.data_start_col, df.width)]
+        # Extract the data subset (columns from col_start onwards)
+        data_columns = [f"column_{i + 1}" for i in range(self.col_start, df.width)]
         data_subset = data_rows.select(data_columns)
 
         # Rename columns to use the headers we extracted
@@ -219,7 +219,7 @@ class PreSelectDataPolars:
         print(f"Original data shape: {df.shape}")
         print("Selecting subset with parameters:")
         print(f"  - Index column: {self.index_col}")
-        print(f"  - Data start column: {self.data_start_col}")
+        print(f"  - Column start: {self.col_start}")
         print(f"  - Row index (header): {self.row_index}")
         print(f"  - Row start: {self.row_start}")
 
@@ -244,7 +244,7 @@ class PreSelectDataPolars:
             "input_file": str(self.input_file),
             "output_file": str(self.output_file),
             "index_col": self.index_col,
-            "data_start_col": self.data_start_col,
+            "col_start": self.col_start,
             "row_index": self.row_index,
             "row_start": self.row_start,
             "sep": self.sep,
@@ -265,7 +265,7 @@ class PreSelectData:
         input_file: str,
         output_file: str | None = None,
         index_col: int | str = 0,
-        data_start_col: int = 1,
+        col_start: int = 1,
         row_index: int = 0,
         row_start: int = 1,
         sep: str | None = None,
@@ -279,7 +279,7 @@ class PreSelectData:
             output_file: Path to the output CSV file (defaults to input_file with "_subset.csv" suffix)
             index_col: Column(s) to use as row index. Can be a single integer (e.g., 0) or
                       comma-separated string of integers (e.g., "1,2,4") for concatenated index (default: 0)
-            data_start_col: Column from which to start outputting data (default: 1)
+            col_start: Column from which to start outputting data (default: 1)
             row_index: Row to use as column header (default: 0)
             row_start: Row from which to start outputting data (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
@@ -289,7 +289,7 @@ class PreSelectData:
         self.input_file = Path(input_file)
         self.output_file = Path(output_file) if output_file else self._generate_output_filename()
         self.index_col = index_col
-        self.data_start_col = data_start_col
+        self.col_start = col_start
         self.row_index = row_index
         self.row_start = row_start
         self.sep = sep
@@ -390,16 +390,14 @@ class PreSelectData:
         if self.row_index >= len(df):
             raise ValueError(f"row_index ({self.row_index}) is out of bounds. DataFrame has {len(df)} rows.")
 
-        if self.data_start_col >= len(df.columns):
-            raise ValueError(
-                f"data_start_col ({self.data_start_col}) is out of bounds. DataFrame has {len(df.columns)} columns."
-            )
+        if self.col_start >= len(df.columns):
+            raise ValueError(f"col_start ({self.col_start}) is out of bounds. DataFrame has {len(df.columns)} columns.")
 
         if self.row_start >= len(df):
             raise ValueError(f"row_start ({self.row_start}) is out of bounds. DataFrame has {len(df)} rows.")
 
         # Extract column headers from the specified row
-        column_headers: list[Any] = df.iloc[self.row_index, self.data_start_col :].tolist()  # type: ignore[attr-defined]
+        column_headers: list[Any] = df.iloc[self.row_index, self.col_start :].tolist()  # type: ignore[attr-defined]
 
         # Extract index name(s) - concatenate if multiple columns
         if len(index_columns_list) == 1:
@@ -420,7 +418,7 @@ class PreSelectData:
             ]
 
         # Extract the data subset
-        data_subset: Any = df.iloc[self.row_start :, self.data_start_col :]  # type: ignore[assignment]
+        data_subset: Any = df.iloc[self.row_start :, self.col_start :]  # type: ignore[assignment]
 
         # Create the new DataFrame with proper headers and indices
         result_df = pd.DataFrame(data=data_subset.values, columns=column_headers, index=row_indices)  # type: ignore[attr-defined,arg-type]
@@ -441,7 +439,7 @@ class PreSelectData:
         print(f"Original data shape: {df.shape}")
         print("Selecting subset with parameters:")
         print(f"  - Index column: {self.index_col}")
-        print(f"  - Data start column: {self.data_start_col}")
+        print(f"  - Column start: {self.col_start}")
         print(f"  - Row index (header): {self.row_index}")
         print(f"  - Row start: {self.row_start}")
 
@@ -465,7 +463,7 @@ class PreSelectData:
             "input_file": str(self.input_file),
             "output_file": str(self.output_file),
             "index_col": self.index_col,
-            "data_start_col": self.data_start_col,
+            "col_start": self.col_start,
             "row_index": self.row_index,
             "row_start": self.row_start,
             "sep": self.sep,
