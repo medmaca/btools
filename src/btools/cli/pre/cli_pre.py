@@ -2,8 +2,7 @@
 
 import click
 
-from btools.scripts.pre.pre_select_data import PreSelectData
-from btools.scripts.pre.rand_numbers import generate_random_numbers
+from btools.scripts.pre.pre_select_data import PreSelectData, PreSelectDataPolars
 
 
 # Create a group called "pre"
@@ -31,7 +30,16 @@ def pre_group():
 @click.option("--sep", "-s", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
 @click.option("--sheet", help="Sheet name or number to read from Excel files (default: first sheet)")
 @click.option(
-    "--index-separator", default="#", help="Separator to use when concatenating multiple index columns (default: '#')"
+    "--index-separator",
+    "--is",
+    default="#",
+    help="Separator to use when concatenating multiple index columns (default: '#')",
+)
+@click.option(
+    "--use-pandas",
+    is_flag=True,
+    default=False,
+    help="Use pandas instead of Polars for data processing (legacy mode)",
 )
 def select_data(
     input_file: str,
@@ -43,11 +51,15 @@ def select_data(
     sep: str | None,
     sheet: str | None,
     index_separator: str,
+    use_pandas: bool,
 ):
     """Select a subset of data from an input file and save as CSV.
 
     This command reads data from various file formats (CSV, Excel, TSV) and allows you
     to select specific subsets based on column and row parameters. All indices are zero-based.
+
+    By default, this tool uses Polars for fast data processing. You can use the --use-pandas
+    flag to switch to the legacy pandas implementation if needed.
 
     By default, the output file will be named with the input filename plus '_subset.csv' suffix.
     For example, 'data.xlsx' will output to 'data_subset.csv'.
@@ -60,7 +72,7 @@ def select_data(
 
     Example usage:
     \b
-    # Basic usage with defaults (outputs to input_subset.csv)
+    # Basic usage with defaults (uses Polars, outputs to input_subset.csv)
     btools pre select_data input.csv
 
     # Select data starting from column 2, using row 1 as headers
@@ -78,6 +90,9 @@ def select_data(
     # Specify custom output file and parameters
     btools pre select_data data.tsv --output subset.csv --index-col 1 --row-start 2
 
+    # Use pandas for legacy compatibility
+    btools pre select_data large_data.csv --use-pandas
+
     # Use custom separator for delimited files
     btools pre select_data data.txt --sep "|" --output result.csv
     """
@@ -85,7 +100,10 @@ def select_data(
         # Convert index_col to int if it's a single number, otherwise keep as string
         parsed_index_col = int(index_col) if "," not in index_col else index_col
 
-        processor = PreSelectData(
+        # Choose implementation based on flag (Polars is default, pandas is legacy)
+        processor_class = PreSelectData if use_pandas else PreSelectDataPolars
+
+        processor = processor_class(
             input_file=input_file,
             output_file=output,
             index_col=parsed_index_col,
