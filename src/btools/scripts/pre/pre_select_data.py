@@ -113,13 +113,13 @@ class PreSelectDataPolars:
                 if file_extension == ".csv":
                     df = pl.read_csv(self.input_file, has_header=False)
                 elif file_extension in [".xlsx", ".xls"]:
-                    # Polars doesn't support Excel directly, so use pandas then convert
-                    sheet_name = self.sheet if self.sheet is not None else 0
+                    # Use Polars read_excel function
                     if self.sheet is not None:
                         print(f"\tReading Excel file: {self.input_file}, sheet: {self.sheet}")
+                        df = pl.read_excel(self.input_file, sheet_name=self.sheet, has_header=False)
                     else:
                         print(f"\tReading Excel file: {self.input_file}")
-                    df = pl.read_excel(self.input_file, sheet_name=sheet_name, has_header=False)
+                        df = pl.read_excel(self.input_file, has_header=False)
 
                 elif file_extension == ".tsv":
                     df = pl.read_csv(self.input_file, separator="\t", has_header=False)
