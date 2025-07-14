@@ -22,6 +22,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "pandas-stubs>=2.3.0.250703",
     "poethepoet>=0.36.0",
     "pyright>=1.1.403",
     "pytest>=8.4.1",
@@ -67,6 +68,20 @@ venvPath = "."         # uv installs the venv in the current dir
 venv = ".venv"         # in a folder called ".venv"
 strict = ["**/*.py"]   # use 'strict' checking on all files
 pythonVersion = "3.10" # if library, specify the _lowest_ supported version
+
+
+#############################
+#        test related       #
+#############################
+# Suppress pandas related type warnings
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+# Allow protected access in tests (needed for testing private methods)
+reportPrivateUsage = "none"
+# Allow unused parameters (common in test mocks)
+reportUnusedParameter = "none"
 
 #############################
 #     poe configuration     #
