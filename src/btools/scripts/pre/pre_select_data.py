@@ -21,9 +21,9 @@ class PreSelectDataPolars:
         input_file: str,
         output_file: str | None = None,
         index_col: int | str = 0,
-        col_start: int = 1,
+        col_start: int | str = 1,
         row_index: int = 0,
-        row_start: int = 1,
+        row_start: int | str = 1,
         sep: str | None = None,
         sheet: str | None = None,
         index_separator: str = "#",
@@ -35,9 +35,11 @@ class PreSelectDataPolars:
             output_file: Path to the output CSV file (defaults to input_file with "_subset.csv" suffix)
             index_col: Column(s) to use as row index. Can be a single integer (e.g., 0) or
                       comma-separated string of integers (e.g., "1,2,4") for concatenated index (default: 0)
-            col_start: Column from which to start outputting data (default: 1)
+            col_start: Column from which to start outputting data. Can be single integer (e.g., 1) or
+                      range string (e.g., "1,50") to output columns 1-50 (default: 1)
             row_index: Row to use as column header (default: 0)
-            row_start: Row from which to start outputting data (default: 1)
+            row_start: Row from which to start outputting data. Can be single integer (e.g., 1) or
+                      range string (e.g., "1,100") to output rows 1-100 (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
             sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
@@ -68,9 +70,67 @@ class PreSelectDataPolars:
                     f"Invalid index_col format '{self.index_col}'. Use comma-separated integers like '1,2,4'"
                 ) from e
 
+    def _parse_range_parameter(self, param: int | str, param_name: str) -> tuple[int, int | None]:
+        """Parse a range parameter that can be either an int or a range string.
+
+        Args:
+            param: Either an integer or a string in format "start,end"
+            param_name: Name of the parameter for error messages
+
+        Returns:
+            Tuple of (start, end) where end is None if only start is specified
+
+        Raises:
+            ValueError: If the parameter format is invalid
+        """
+        if isinstance(param, int):
+            return (param, None)
+        # param is str due to type union
+        try:
+            if "," in param:
+                parts = [p.strip() for p in param.split(",")]
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid {param_name} range format '{param}'. Use 'start,end' format")
+                start, end = int(parts[0]), int(parts[1])
+                if start > end:
+                    raise ValueError(f"Invalid {param_name} range '{param}': start must be <= end")
+                # For polars, we return end + 1 to include the end in the slice
+                return (start, end + 1)
+            else:
+                return (int(param), None)
+        except ValueError as e:
+            if "invalid literal" in str(e):
+                raise ValueError(f"Invalid {param_name} format '{param}'. Use integer or 'start,end' format") from e
+            raise
+
+    def _parse_col_start(self) -> tuple[int, int | None]:
+        """Parse col_start parameter into start and end positions."""
+        return self._parse_range_parameter(self.col_start, "col_start")
+
+    def _parse_row_start(self) -> tuple[int, int | None]:
+        """Parse row_start parameter into start and end positions."""
+        return self._parse_range_parameter(self.row_start, "row_start")
+
+    def _generate_range_suffix(self, num_rows: int, num_cols: int) -> str:
+        """Generate suffix for filename based on the number of rows and columns in subset."""
+        return f"_row{num_rows}_col{num_cols}"
+
     def _generate_output_filename(self) -> Path:
-        """Generate output filename based on input filename."""
+        """Generate output filename based on input filename.
+
+        Note: The range suffix will be added later in the process method
+        when we know the actual dimensions of the subset.
+        """
         return self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+
+    def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
+        """Update output filename to include range information."""
+        stem = output_file.stem
+        range_suffix = self._generate_range_suffix(num_rows, num_cols)
+
+        # Insert range suffix before any existing suffix
+        new_stem = stem + range_suffix
+        return output_file.with_stem(new_stem)
 
     def _read_data(self) -> pl.DataFrame:
         """Read data from the input file using Polars.
@@ -145,9 +205,12 @@ class PreSelectDataPolars:
         Returns:
             Polars DataFrame containing the selected subset
         """
-        # Validate parameters
+        # Parse range parameters
         index_columns_list = self._parse_index_columns()
+        col_start, col_end = self._parse_col_start()
+        row_start, row_end = self._parse_row_start()
 
+        # Validate parameters
         # Check all index columns are within bounds
         for col_idx in index_columns_list:
             if col_idx >= df.width:
@@ -156,16 +219,27 @@ class PreSelectDataPolars:
         if self.row_index >= df.height:
             raise ValueError(f"row_index ({self.row_index}) is out of bounds. DataFrame has {df.height} rows.")
 
-        if self.col_start >= df.width:
-            raise ValueError(f"col_start ({self.col_start}) is out of bounds. DataFrame has {df.width} columns.")
+        if col_start >= df.width:
+            raise ValueError(f"col_start ({col_start}) is out of bounds. DataFrame has {df.width} columns.")
 
-        if self.row_start >= df.height:
-            raise ValueError(f"row_start ({self.row_start}) is out of bounds. DataFrame has {df.height} rows.")
+        if row_start >= df.height:
+            raise ValueError(f"row_start ({row_start}) is out of bounds. DataFrame has {df.height} rows.")
+
+        # Validate ranges
+        if col_end is not None and col_end >= df.width:
+            raise ValueError(f"col_end ({col_end}) is out of bounds. DataFrame has {df.width} columns.")
+
+        if row_end is not None and row_end >= df.height:
+            raise ValueError(f"row_end ({row_end}) is out of bounds. DataFrame has {df.height} rows.")
+
+        # Calculate actual end positions
+        actual_col_end = col_end if col_end is not None else df.width
+        actual_row_end = row_end if row_end is not None else df.height
 
         # Extract column headers from the specified row
         header_row = df.slice(self.row_index, 1)
         # Polars uses column_1, column_2, etc. when has_header=False (1-indexed)
-        header_cols = [pl.col(f"column_{i + 1}") for i in range(self.col_start, df.width)]
+        header_cols = [pl.col(f"column_{i + 1}") for i in range(col_start, actual_col_end)]
         column_headers = [str(val) for val in header_row.select(header_cols).row(0)]
 
         # Extract index name(s) - concatenate if multiple columns
@@ -175,8 +249,9 @@ class PreSelectDataPolars:
             index_parts = [str(header_row.select(pl.col(f"column_{col + 1}")).item()) for col in index_columns_list]
             index_name = self.index_separator.join(index_parts)
 
-        # Extract the data subset and row indices
-        data_rows = df.slice(self.row_start, df.height - self.row_start)
+        # Extract the data subset and row indices (with range support)
+        data_length = actual_row_end - row_start
+        data_rows = df.slice(row_start, data_length)
 
         # Extract row indices from the specified column(s) - concatenate if multiple columns
         if len(index_columns_list) == 1:
@@ -189,8 +264,8 @@ class PreSelectDataPolars:
             for row in data_rows.select(index_cols).iter_rows():
                 row_indices.append(self.index_separator.join(str(val) for val in row))
 
-        # Extract the data subset (columns from col_start onwards)
-        data_columns = [f"column_{i + 1}" for i in range(self.col_start, df.width)]
+        # Extract the data subset (columns from col_start to col_end)
+        data_columns = [f"column_{i + 1}" for i in range(col_start, actual_col_end)]
         data_subset = data_rows.select(data_columns)
 
         # Rename columns to use the headers we extracted
@@ -226,11 +301,21 @@ class PreSelectDataPolars:
         selected_df = self._select_subset(df)
         shape_a, shape_b = selected_df.shape
 
-        print(f"Selected data shape: {shape_a},{shape_b - 1}")
-        print(f"Saving to: {self.output_file}")
+        # Update output filename to include range information
+        # Subtract 1 from columns because the index column is included
+        actual_data_cols = shape_b - 1
+        _, col_end = self._parse_col_start()
+        _, row_end = self._parse_row_start()
+        if (col_end is not None) or (row_end is not None):
+            updated_output_file = self._update_output_filename_with_range(self.output_file, shape_a, actual_data_cols)
+        else:
+            updated_output_file = self.output_file
+
+        print(f"Selected data shape: {shape_a},{actual_data_cols}")
+        print(f"Saving to: {updated_output_file}")
 
         # Save to CSV file using Polars
-        selected_df.write_csv(str(self.output_file))
+        selected_df.write_csv(str(updated_output_file))
 
         print("Processing completed successfully!")
 
@@ -265,9 +350,9 @@ class PreSelectData:
         input_file: str,
         output_file: str | None = None,
         index_col: int | str = 0,
-        col_start: int = 1,
+        col_start: int | str = 1,
         row_index: int = 0,
-        row_start: int = 1,
+        row_start: int | str = 1,
         sep: str | None = None,
         sheet: str | None = None,
         index_separator: str = "#",
@@ -279,9 +364,11 @@ class PreSelectData:
             output_file: Path to the output CSV file (defaults to input_file with "_subset.csv" suffix)
             index_col: Column(s) to use as row index. Can be a single integer (e.g., 0) or
                       comma-separated string of integers (e.g., "1,2,4") for concatenated index (default: 0)
-            col_start: Column from which to start outputting data (default: 1)
+            col_start: Column from which to start outputting data. Can be single integer (e.g., 1) or
+                      range string (e.g., "1,50") to output columns 1-50 (default: 1)
             row_index: Row to use as column header (default: 0)
-            row_start: Row from which to start outputting data (default: 1)
+            row_start: Row from which to start outputting data. Can be single integer (e.g., 1) or
+                      range string (e.g., "1,100") to output rows 1-100 (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
             sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
@@ -312,9 +399,66 @@ class PreSelectData:
                     f"Invalid index_col format '{self.index_col}'. Use comma-separated integers like '1,2,4'"
                 ) from e
 
+    def _parse_range_parameter(self, param: int | str, param_name: str) -> tuple[int, int | None]:
+        """Parse a range parameter that can be either an int or a range string.
+
+        Args:
+            param: Either an integer or a string in format "start,end"
+            param_name: Name of the parameter for error messages
+
+        Returns:
+            Tuple of (start, end) where end is None if only start is specified
+
+        Raises:
+            ValueError: If the parameter format is invalid
+        """
+        if isinstance(param, int):
+            return (param, None)
+        # param is str due to type union
+        try:
+            if "," in param:
+                parts = [p.strip() for p in param.split(",")]
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid {param_name} range format '{param}'. Use 'start,end' format")
+                start, end = int(parts[0]), int(parts[1])
+                if start > end:
+                    raise ValueError(f"Invalid {param_name} range '{param}': start must be <= end")
+                return (start, end)
+            else:
+                return (int(param), None)
+        except ValueError as e:
+            if "invalid literal" in str(e):
+                raise ValueError(f"Invalid {param_name} format '{param}'. Use integer or 'start,end' format") from e
+            raise
+
+    def _parse_col_start(self) -> tuple[int, int | None]:
+        """Parse col_start parameter into start and end positions."""
+        return self._parse_range_parameter(self.col_start, "col_start")
+
+    def _parse_row_start(self) -> tuple[int, int | None]:
+        """Parse row_start parameter into start and end positions."""
+        return self._parse_range_parameter(self.row_start, "row_start")
+
+    def _generate_range_suffix(self, num_rows: int, num_cols: int) -> str:
+        """Generate suffix for filename based on the number of rows and columns in subset."""
+        return f"_row{num_rows}_col{num_cols}"
+
     def _generate_output_filename(self) -> Path:
-        """Generate output filename based on input filename."""
+        """Generate output filename based on input filename.
+
+        Note: The range suffix will be added later in the process method
+        when we know the actual dimensions of the subset.
+        """
         return self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+
+    def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
+        """Update output filename to include range information."""
+        stem = output_file.stem
+        range_suffix = self._generate_range_suffix(num_rows, num_cols)
+
+        # Insert range suffix before any existing suffix
+        new_stem = stem + range_suffix
+        return output_file.with_stem(new_stem)
 
     def _read_data(self) -> pd.DataFrame:  # type: ignore[type-arg]
         """Read data from the input file.
@@ -379,9 +523,12 @@ class PreSelectData:
         Returns:
             DataFrame containing the selected subset
         """
-        # Validate parameters
+        # Parse range parameters
         index_columns_list = self._parse_index_columns()
+        col_start, col_end = self._parse_col_start()
+        row_start, row_end = self._parse_row_start()
 
+        # Validate parameters
         # Check all index columns are within bounds
         for col_idx in index_columns_list:
             if col_idx >= len(df.columns):
@@ -390,14 +537,25 @@ class PreSelectData:
         if self.row_index >= len(df):
             raise ValueError(f"row_index ({self.row_index}) is out of bounds. DataFrame has {len(df)} rows.")
 
-        if self.col_start >= len(df.columns):
-            raise ValueError(f"col_start ({self.col_start}) is out of bounds. DataFrame has {len(df.columns)} columns.")
+        if col_start >= len(df.columns):
+            raise ValueError(f"col_start ({col_start}) is out of bounds. DataFrame has {len(df.columns)} columns.")
 
-        if self.row_start >= len(df):
-            raise ValueError(f"row_start ({self.row_start}) is out of bounds. DataFrame has {len(df)} rows.")
+        if row_start >= len(df):
+            raise ValueError(f"row_start ({row_start}) is out of bounds. DataFrame has {len(df)} rows.")
+
+        # Validate ranges
+        if col_end is not None and col_end >= len(df.columns):
+            raise ValueError(f"col_end ({col_end}) is out of bounds. DataFrame has {len(df.columns)} columns.")
+
+        if row_end is not None and row_end >= len(df):
+            raise ValueError(f"row_end ({row_end}) is out of bounds. DataFrame has {len(df)} rows.")
+
+        # Calculate actual end positions (pandas uses exclusive end)
+        actual_col_end = col_end + 1 if col_end is not None else len(df.columns)
+        actual_row_end = row_end + 1 if row_end is not None else len(df)
 
         # Extract column headers from the specified row
-        column_headers: list[Any] = df.iloc[self.row_index, self.col_start :].tolist()  # type: ignore[attr-defined]
+        column_headers: list[Any] = df.iloc[self.row_index, col_start:actual_col_end].tolist()  # type: ignore[attr-defined]
 
         # Extract index name(s) - concatenate if multiple columns
         if len(index_columns_list) == 1:
@@ -408,17 +566,17 @@ class PreSelectData:
 
         # Extract row indices from the specified column(s) - concatenate if multiple columns
         if len(index_columns_list) == 1:
-            row_indices: list[Any] = df.iloc[self.row_start :, index_columns_list[0]].tolist()  # type: ignore[attr-defined]
+            row_indices: list[Any] = df.iloc[row_start:actual_row_end, index_columns_list[0]].tolist()  # type: ignore[attr-defined]
         else:
             # Create concatenated index from multiple columns
-            row_data = df.iloc[self.row_start :, index_columns_list]  # type: ignore[assignment]
+            row_data = df.iloc[row_start:actual_row_end, index_columns_list]  # type: ignore[assignment]
             row_indices = [
                 self.index_separator.join(str(val) for val in row)  # type: ignore[var-annotated]
                 for row in row_data.values  # type: ignore[attr-defined]
             ]
 
         # Extract the data subset
-        data_subset: Any = df.iloc[self.row_start :, self.col_start :]  # type: ignore[assignment]
+        data_subset: Any = df.iloc[row_start:actual_row_end, col_start:actual_col_end]  # type: ignore[assignment]
 
         # Create the new DataFrame with proper headers and indices
         result_df = pd.DataFrame(data=data_subset.values, columns=column_headers, index=row_indices)  # type: ignore[attr-defined,arg-type]
@@ -445,11 +603,21 @@ class PreSelectData:
 
         selected_df = self._select_subset(df)
 
+        # Update output filename to include range information
+        # The shape includes the index, so we use the actual data columns
+        num_rows, num_cols = selected_df.shape
+        _, col_end = self._parse_col_start()
+        _, row_end = self._parse_row_start()
+        if (col_end is not None) or (row_end is not None):
+            updated_output_file = self._update_output_filename_with_range(self.output_file, num_rows, num_cols)
+        else:
+            updated_output_file = self.output_file
+
         print(f"Selected data shape: {selected_df.shape}")
-        print(f"Saving to: {self.output_file}")
+        print(f"Saving to: {updated_output_file}")
 
         # Save to CSV file
-        selected_df.to_csv(self.output_file)  # type: ignore[call-overload]
+        selected_df.to_csv(updated_output_file)  # type: ignore[call-overload]
 
         print("Processing completed successfully!")
 
