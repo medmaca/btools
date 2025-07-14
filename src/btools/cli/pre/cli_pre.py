@@ -150,6 +150,12 @@ def select_data(
 @click.option("--output-info-file", "--oif", help="Filename to output detailed info to TOML file", default="fileinfo.toml")
 @click.option("--sep", "-s", help="Custom separator for CSV files")
 @click.option("--sheet", help="Sheet name or number for Excel files")
+@click.option(
+    "--display-mode",
+    type=click.Choice(["auto", "normal", "rotated", "wrapped"]),
+    default="auto",
+    help="Display mode for data preview (default: auto)",
+)
 @click.option("--no-stats", is_flag=True, default=False, help="Don't show statistical summary")
 @click.option("--no-types", is_flag=True, default=False, help="Don't show data types")
 @click.option("--no-missing", is_flag=True, default=False, help="Don't show missing value analysis")
@@ -161,6 +167,7 @@ def view_data(
     output_info_file: str | None,
     sep: str | None,
     sheet: str | None,
+    display_mode: str,
     no_stats: bool,
     no_types: bool,
     no_missing: bool,
@@ -176,16 +183,25 @@ def view_data(
     The tool supports multiple file formats including CSV, TSV, Excel, and more.
     It uses Polars for fast data processing and Rich for beautiful terminal output.
 
+    Display modes:
+    - auto: Automatically choose best display mode based on column count
+    - normal: Standard horizontal table (best for ≤5 columns)
+    - rotated: Shortened column headers (good for 6-10 columns)
+    - wrapped: Multi-section tables (best for >10 columns)
+
     Example usage:
     \b
-    # Basic usage - show first 50 rows and 25 columns
+    # Basic usage - show first 50 rows and 25 columns (auto mode)
     btools pre view data.csv
 
     # Show specific range of rows and columns
     btools pre view data.csv --rows "10,100" --cols "5,15"
 
-    # Show first 20 rows and 10 columns
-    btools pre view data.csv --rows 20 --cols 10
+    # Force wrapped display mode for many columns
+    btools pre view data.csv --cols "1,20" --display-mode wrapped
+
+    # Use rotated headers for medium column count
+    btools pre view data.csv --cols 10 --display-mode rotated
 
     # Generate detailed TOML report
     btools pre view data.csv --output-info --output-info-file analysis.toml
@@ -214,6 +230,7 @@ def view_data(
             show_stats=not no_stats,
             show_types=not no_types,
             show_missing=not no_missing,
+            display_mode=display_mode,
         )
         viewer.view()
     except Exception as e:

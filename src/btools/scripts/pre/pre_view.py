@@ -33,6 +33,7 @@ class PreViewData:
         show_stats: bool = True,
         show_types: bool = True,
         show_missing: bool = True,
+        display_mode: str = "auto",
     ):
         """Initialize the PreViewData class.
 
@@ -48,6 +49,7 @@ class PreViewData:
             show_stats: Whether to show basic statistics (default: True)
             show_types: Whether to show data types (default: True)
             show_missing: Whether to show missing value analysis (default: True)
+            display_mode: Display mode for data preview. Options: "auto", "normal", "rotated", "wrapped" (default: "auto")
         """
         self.input_file = Path(input_file)
         self.rows = rows
@@ -58,6 +60,7 @@ class PreViewData:
         self.show_stats = show_stats
         self.show_types = show_types
         self.show_missing = show_missing
+        self.display_mode = display_mode
         self.console = Console()
 
     def _parse_rows_parameter(self) -> tuple[int, int | None]:
@@ -297,7 +300,7 @@ class PreViewData:
     def _create_data_preview_table(
         self, df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
     ) -> Table:
-        """Create a Rich table showing the actual data preview."""
+        """Create a Rich table showing the actual data preview with adaptive layout."""
         # Select row subset
         display_df = df.slice(start_row, end_row - start_row)
 
@@ -310,13 +313,48 @@ class PreViewData:
         selected_columns = all_columns[start_col:end_col]
         display_df = display_df.select(selected_columns)
 
+        num_cols = len(selected_columns)
+
+        # Determine display mode
+        if self.display_mode == "auto":
+            # Adaptive display based on number of columns
+            if num_cols <= 5:
+                return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
+            elif num_cols <= 10:
+                return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
+            else:
+                return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
+        elif self.display_mode == "normal":
+            return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
+        elif self.display_mode == "rotated":
+            return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
+        elif self.display_mode == "wrapped":
+            return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
+        else:
+            # Default to auto mode for unknown display modes
+            if num_cols <= 5:
+                return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
+            elif num_cols <= 10:
+                return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
+            else:
+                return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
+
+    def _create_standard_table(
+        self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
+    ) -> Table:
+        """Create a standard horizontal table for small number of columns."""
+        title_text = (
+            f"🔍 Data Preview (Rows {start_row}-"
+            f"{min(end_row - 1, start_row + display_df.height - 1)}, "
+            f"Cols {start_col}-{end_col - 1})"
+        )
         table = Table(
-            title=f"🔍 Data Preview (Rows {start_row}-{min(end_row - 1, df.height - 1)}, Cols {start_col}-{end_col - 1})",
+            title=title_text,
             show_header=True,
             header_style="bold cyan",
         )
 
-        # Add columns (limit width for readability)
+        # Add columns with normal headers
         for col_name in display_df.columns:
             table.add_column(col_name, style="white", max_width=20, overflow="ellipsis")
 
@@ -334,6 +372,102 @@ class PreViewData:
             table.add_row(*formatted_row)
 
         return table
+
+    def _create_rotated_header_table(
+        self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
+    ) -> Table:
+        """Create a table with rotated column headers for medium number of columns."""
+        title_text = (
+            f"🔍 Data Preview (Rows {start_row}-"
+            f"{min(end_row - 1, start_row + display_df.height - 1)}, "
+            f"Cols {start_col}-{end_col - 1}) [Rotated Headers]"
+        )
+        table = Table(
+            title=title_text,
+            show_header=True,
+            header_style="bold cyan",
+        )
+
+        # Add columns with rotated headers (using vertical text approximation)
+        for col_name in display_df.columns:
+            # Create a vertical-style header by putting each character on a new "line" using spaces
+            rotated_header = col_name[:6] + ".." if len(col_name) > 8 else col_name
+
+            table.add_column(rotated_header, style="white", max_width=12, overflow="ellipsis", justify="center")
+
+        # Add rows
+        for row in display_df.iter_rows():
+            formatted_row: list[str] = []
+            for val in row:
+                if val is None:
+                    formatted_row.append("[dim red]null[/dim red]")
+                else:
+                    str_val = str(val)
+                    if len(str_val) > 10:
+                        str_val = str_val[:8] + ".."
+                    formatted_row.append(str_val)
+            table.add_row(*formatted_row)
+
+        return table
+
+    def _create_wrapped_table(
+        self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
+    ) -> Table:
+        """Create multiple tables wrapping columns across sections."""
+        tables: list[Table] = []
+        cols_per_section = 5
+        total_cols = len(display_df.columns)
+
+        for section_start in range(0, total_cols, cols_per_section):
+            section_end = min(section_start + cols_per_section, total_cols)
+            section_columns = display_df.columns[section_start:section_end]
+            section_df = display_df.select(section_columns)
+
+            table = Table(
+                title=f"Cols {start_col + section_start}-{start_col + section_end - 1}",
+                show_header=True,
+                header_style="bold cyan",
+                title_style="bold blue",
+            )
+
+            # Add columns for this section
+            for col_name in section_df.columns:
+                table.add_column(col_name, style="white", max_width=15, overflow="ellipsis")
+
+            # Add rows for this section
+            for row in section_df.iter_rows():
+                formatted_row: list[str] = []
+                for val in row:
+                    if val is None:
+                        formatted_row.append("[dim red]null[/dim red]")
+                    else:
+                        str_val = str(val)
+                        if len(str_val) > 13:
+                            str_val = str_val[:10] + "..."
+                        formatted_row.append(str_val)
+                table.add_row(*formatted_row)
+
+            tables.append(table)
+
+        # Create a combined display
+        main_table = Table.grid()
+        main_table.add_column()
+
+        # Add title
+        title_text = (
+            f"[bold cyan]🔍 Data Preview (Rows {start_row}-"
+            f"{min(end_row - 1, start_row + display_df.height - 1)}, "
+            f"Cols {start_col}-{end_col - 1}) [Wrapped Layout][/bold cyan]"
+        )
+        main_table.add_row(title_text)
+
+        # Add each table section
+        for i, table in enumerate(tables):
+            if i > 0:
+                main_table.add_row("")  # Add spacing between sections
+            main_table.add_row(table)
+
+        return main_table
 
     def _generate_detailed_info(self, df: pl.DataFrame) -> dict[str, Any]:
         """Generate detailed information about the dataset for file output."""
@@ -509,6 +643,7 @@ class PreViewData:
             "show_stats": self.show_stats,
             "show_types": self.show_types,
             "show_missing": self.show_missing,
+            "display_mode": self.display_mode,
         }
 
 
@@ -524,6 +659,12 @@ def main():
     parser.add_argument("--output-info", "--oi", help="Output detailed info to TOML file")
     parser.add_argument("--sep", help="Custom separator for CSV files")
     parser.add_argument("--sheet", help="Sheet name or number for Excel files")
+    parser.add_argument(
+        "--display-mode",
+        choices=["auto", "normal", "rotated", "wrapped"],
+        default="auto",
+        help="Display mode for data preview (default: auto)",
+    )
     parser.add_argument("--no-stats", action="store_true", help="Don't show statistical summary")
     parser.add_argument("--no-types", action="store_true", help="Don't show data types")
     parser.add_argument("--no-missing", action="store_true", help="Don't show missing value analysis")
@@ -541,6 +682,7 @@ def main():
             show_stats=not args.no_stats,
             show_types=not args.no_types,
             show_missing=not args.no_missing,
+            display_mode=args.display_mode,
         )
         viewer.view()
 
