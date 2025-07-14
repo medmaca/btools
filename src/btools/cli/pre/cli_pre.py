@@ -1,8 +1,11 @@
 """Defines all CLI commands for the template-cli application."""
 
+import os
+
 import click
 
 from btools.scripts.pre.pre_select_data import PreSelectData, PreSelectDataPolars
+from btools.scripts.pre.pre_view import PreViewData
 
 
 # Create a group called "pre"
@@ -131,6 +134,88 @@ def select_data(
             index_separator=index_separator,
         )
         processor.process()
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise click.Abort() from e
+
+
+# Data viewing/profiling command
+@pre_group.command("view")
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("--rows", "-r", default="50", help="Number of rows to display or range (e.g., '50' or '10,60') (default: 50)")
+@click.option(
+    "--cols", "-c", default="25", help="Number of columns to display or range (e.g., '25' or '5,15') (default: 25)"
+)
+@click.option("--output-info", "--oi", help="If set will output information to a TOML file", default=False, is_flag=True)
+@click.option("--output-info-file", "--oif", help="Filename to output detailed info to TOML file", default="fileinfo.toml")
+@click.option("--sep", "-s", help="Custom separator for CSV files")
+@click.option("--sheet", help="Sheet name or number for Excel files")
+@click.option("--no-stats", is_flag=True, default=False, help="Don't show statistical summary")
+@click.option("--no-types", is_flag=True, default=False, help="Don't show data types")
+@click.option("--no-missing", is_flag=True, default=False, help="Don't show missing value analysis")
+def view_data(
+    input_file: str,
+    rows: str,
+    cols: str,
+    output_info: bool,
+    output_info_file: str | None,
+    sep: str | None,
+    sheet: str | None,
+    no_stats: bool,
+    no_types: bool,
+    no_missing: bool,
+):
+    """Quickly view and profile datasets with beautiful terminal output.
+
+    This command provides a fast way to explore datasets by displaying:
+    - Dataset overview (rows, columns, memory usage)
+    - Column information (data types, missing values, unique counts)
+    - Statistical summary for numeric columns
+    - Data preview with configurable row and column display
+
+    The tool supports multiple file formats including CSV, TSV, Excel, and more.
+    It uses Polars for fast data processing and Rich for beautiful terminal output.
+
+    Example usage:
+    \b
+    # Basic usage - show first 50 rows and 25 columns
+    btools pre view data.csv
+
+    # Show specific range of rows and columns
+    btools pre view data.csv --rows "10,100" --cols "5,15"
+
+    # Show first 20 rows and 10 columns
+    btools pre view data.csv --rows 20 --cols 10
+
+    # Generate detailed TOML report
+    btools pre view data.csv --output-info --output-info-file analysis.toml
+
+    # Excel file with specific sheet
+    btools pre view data.xlsx --sheet "Sheet2"
+
+    # Custom separator and minimal output
+    btools pre view data.txt --sep "|" --no-stats
+
+    # Show only data preview without types or stats, limited columns
+    btools pre view large_data.csv --no-types --no-stats --rows 10 --cols 5
+    """
+    try:
+        output_info_path: str | None = None
+        if output_info and output_info_file:
+            output_info_path = os.path.join(os.path.dirname(input_file), output_info_file)
+
+        viewer = PreViewData(
+            input_file=input_file,
+            rows=rows,
+            cols=cols,
+            output_info=output_info_path,
+            sep=sep,
+            sheet=sheet,
+            show_stats=not no_stats,
+            show_types=not no_types,
+            show_missing=not no_missing,
+        )
+        viewer.view()
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise click.Abort() from e
