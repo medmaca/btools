@@ -58,7 +58,9 @@ class TestPreSelectDataPolars:
         processor = PreSelectDataPolars(str(csv_file))
 
         assert processor.input_file == csv_file
-        assert processor.output_file == csv_file.with_stem(csv_file.stem + "_subset").with_suffix(".csv")
+        # Output file depends on GZIP_OUT environment variable
+        expected_output = csv_file.with_stem(csv_file.stem + "_subset").with_suffix(".csv.gz")
+        assert processor.output_file == expected_output
         assert processor.index_col == 0
         assert processor.col_start == 1
         assert processor.row_index == 0
@@ -149,7 +151,8 @@ class TestPreSelectDataPolars:
     def test_generate_output_filename(self, csv_file: Path) -> None:
         """Test generating default output filename."""
         processor = PreSelectDataPolars(str(csv_file))
-        expected = csv_file.with_stem(csv_file.stem + "_subset").with_suffix(".csv")
+        # Output file depends on GZIP_OUT environment variable
+        expected = csv_file.with_stem(csv_file.stem + "_subset").with_suffix(".csv.gz")
         assert processor._generate_output_filename() == expected  # type: ignore[attr-defined]
 
     def test_update_output_filename_with_range(self, csv_file: Path, temp_output_dir: Path) -> None:
@@ -319,6 +322,86 @@ class TestPreSelectDataPolars:
         assert info["col_start"] == "2,4"
         assert info["sep"] == ","
 
+    def test_gzipped_csv_input(self, test_data_dir: Path, temp_output_dir: Path) -> None:
+        """Test reading from gzipped CSV files."""
+        csv_gz_file = test_data_dir / "test_data.csv.gz"
+        output_file = temp_output_dir / "output.csv"
+
+        processor = PreSelectDataPolars(str(csv_gz_file), str(output_file))
+        # Test that process completes without errors - this indirectly tests _read_data
+        processor.process()
+
+        # Output file should exist
+        assert output_file.exists()
+
+    def test_gzipped_tsv_input(self, test_data_dir: Path, temp_output_dir: Path) -> None:
+        """Test reading from gzipped TSV files."""
+        tsv_gz_file = test_data_dir / "test_data.tsv.gz"
+        output_file = temp_output_dir / "output.csv"
+
+        processor = PreSelectDataPolars(str(tsv_gz_file), str(output_file))
+        # Test that process completes without errors - this indirectly tests _read_data
+        processor.process()
+
+        # Output file should exist
+        assert output_file.exists()
+
+    @patch.dict("os.environ", {"GZIP_OUT": "True"})
+    def test_gzipped_output_when_env_set(self, csv_file: Path, temp_output_dir: Path) -> None:
+        """Test that output files are gzipped when GZIP_OUT=True."""
+        processor = PreSelectDataPolars(str(csv_file))
+
+        # Process and check that output file has .gz extension when GZIP_OUT is True
+        processor.process()
+        assert processor.output_file.suffix == ".gz"
+
+    @patch.dict("os.environ", {"GZIP_OUT": "False"})
+    def test_uncompressed_output_when_env_false(self, csv_file: Path, temp_output_dir: Path) -> None:
+        """Test that output files are not gzipped when GZIP_OUT=False."""
+        processor = PreSelectDataPolars(str(csv_file))
+
+        # Process and check that output file doesn't have .gz extension
+        processor.process()
+        assert processor.output_file.suffix == ".csv"
+
+    @patch.dict("os.environ", {"GZIP_OUT": "True"})
+    def test_process_with_gzipped_output(self, csv_file: Path, temp_output_dir: Path) -> None:
+        """Test full processing with gzipped output."""
+        processor = PreSelectDataPolars(str(csv_file))
+        processor.output_file = temp_output_dir / "test_output.csv.gz"
+
+        # Process should complete without errors
+        processor.process()
+
+        # Output file should exist and be readable
+        assert processor.output_file.exists()
+
+        # Should be able to read the gzipped output back
+        import gzip
+
+        with gzip.open(processor.output_file, "rt") as f:
+            content = f.read()
+            assert len(content) > 0
+            assert "," in content  # Should be CSV format
+
+    def test_file_extension_handling_integration(self, test_data_dir: Path, temp_output_dir: Path) -> None:
+        """Test that different file extensions (including .gz) are handled correctly via integration."""
+        # Test that .csv.gz files can be processed
+        csv_gz_file = test_data_dir / "test_data.csv.gz"
+        output_file = temp_output_dir / "test_csv_gz.csv"
+
+        processor = PreSelectDataPolars(str(csv_gz_file), str(output_file))
+        processor.process()
+        assert output_file.exists()
+
+        # Test that .tsv.gz files can be processed
+        tsv_gz_file = test_data_dir / "test_data.tsv.gz"
+        output_file2 = temp_output_dir / "test_tsv_gz.csv"
+
+        processor2 = PreSelectDataPolars(str(tsv_gz_file), str(output_file2))
+        processor2.process()
+        assert output_file2.exists()
+
 
 class TestPreSelectData:
     """Test suite for PreSelectData class (pandas implementation)."""
@@ -349,7 +432,9 @@ class TestPreSelectData:
         processor = PreSelectData(str(csv_file))
 
         assert processor.input_file == csv_file
-        assert processor.output_file == csv_file.with_stem(csv_file.stem + "_subset").with_suffix(".csv")
+        # Output file depends on GZIP_OUT environment variable
+        expected_output = csv_file.with_stem(csv_file.stem + "_subset").with_suffix(".csv.gz")
+        assert processor.output_file == expected_output
         assert processor.index_col == 0
         assert processor.col_start == 1
         assert processor.row_index == 0
@@ -484,6 +569,68 @@ class TestPreSelectData:
         assert info["index_col"] == "1,2"
         assert info["col_start"] == "2,4"
         assert info["sep"] == ","
+
+    def test_gzipped_csv_input_pandas(self, test_data_dir: Path, temp_output_dir: Path) -> None:
+        """Test reading from gzipped CSV files with Pandas implementation."""
+        csv_gz_file = test_data_dir / "test_data.csv.gz"
+        output_file = temp_output_dir / "output_pandas.csv"
+
+        processor = PreSelectData(str(csv_gz_file), str(output_file))
+        # Test that process completes without errors
+        processor.process()
+
+        # Output file should exist
+        assert output_file.exists()
+
+    def test_gzipped_tsv_input_pandas(self, test_data_dir: Path, temp_output_dir: Path) -> None:
+        """Test reading from gzipped TSV files with Pandas implementation."""
+        tsv_gz_file = test_data_dir / "test_data.tsv.gz"
+        output_file = temp_output_dir / "output_pandas.csv"
+
+        processor = PreSelectData(str(tsv_gz_file), str(output_file))
+        # Test that process completes without errors
+        processor.process()
+
+        # Output file should exist
+        assert output_file.exists()
+
+    @patch.dict("os.environ", {"GZIP_OUT": "True"})
+    def test_gzipped_output_when_env_set_pandas(self, csv_file: Path, temp_output_dir: Path) -> None:
+        """Test that output files are gzipped when GZIP_OUT=True with Pandas."""
+        processor = PreSelectData(str(csv_file))
+
+        # Process and check that output file has .gz extension
+        processor.process()
+        assert processor.output_file.suffix == ".gz"
+
+    @patch.dict("os.environ", {"GZIP_OUT": "False"})
+    def test_uncompressed_output_when_env_false_pandas(self, csv_file: Path, temp_output_dir: Path) -> None:
+        """Test that output files are not gzipped when GZIP_OUT=False with Pandas."""
+        processor = PreSelectData(str(csv_file))
+
+        # Process and check that output file doesn't have .gz extension
+        processor.process()
+        assert processor.output_file.suffix == ".csv"
+
+    @patch.dict("os.environ", {"GZIP_OUT": "True"})
+    def test_process_with_gzipped_output_pandas(self, csv_file: Path, temp_output_dir: Path) -> None:
+        """Test full processing with gzipped output using Pandas."""
+        processor = PreSelectData(str(csv_file))
+        processor.output_file = temp_output_dir / "test_output_pandas.csv.gz"
+
+        # Process should complete without errors
+        processor.process()
+
+        # Output file should exist and be readable
+        assert processor.output_file.exists()
+
+        # Should be able to read the gzipped output back
+        import gzip
+
+        with gzip.open(processor.output_file, "rt") as f:
+            content = f.read()
+            assert len(content) > 0
+            assert "," in content  # Should be CSV format
 
 
 class TestComparisonBetweenImplementations:

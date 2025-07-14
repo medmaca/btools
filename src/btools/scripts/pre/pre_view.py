@@ -26,6 +26,42 @@ load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)  # Current directory
 load_dotenv(dotenv_path=Path.home() / ".env", override=True)  # User home directory (highest priority)
 
 
+def _get_true_file_extension(file_path: Path) -> str:
+    """Get the true file extension, handling .gz files properly.
+
+    For example:
+    - 'data.csv.gz' returns '.csv'
+    - 'data.tsv.gz' returns '.tsv'
+    - 'data.xlsx.gz' returns '.xlsx'
+    - 'data.csv' returns '.csv'
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        The true file extension (without .gz)
+    """
+    suffixes = file_path.suffixes
+    if len(suffixes) >= 2 and suffixes[-1].lower() == ".gz":
+        return suffixes[-2].lower()
+    elif len(suffixes) >= 1:
+        return suffixes[-1].lower()
+    else:
+        return ""
+
+
+def _is_gzipped(file_path: Path) -> bool:
+    """Check if a file is gzip compressed.
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        True if the file is gzip compressed
+    """
+    return file_path.suffix.lower() == ".gz"
+
+
 class ViewConfig:
     """Configuration class for pre_view display modes."""
 
@@ -174,10 +210,12 @@ class PreViewData:
         """Read data from the input file using Polars.
 
         Supports multiple file formats:
-        - CSV files (.csv): Uses polars.read_csv with auto-detected or custom separator
-        - Excel files (.xlsx, .xls): Uses polars.read_excel
-        - TSV files (.tsv): Uses polars.read_csv with tab separator
+        - CSV files (.csv, .csv.gz): Uses polars.read_csv with auto-detected or custom separator
+        - Excel files (.xlsx, .xls): Uses polars.read_excel (note: .gz not supported for Excel)
+        - TSV files (.tsv, .tsv.gz): Uses polars.read_csv with tab separator
         - Other formats: Defaults to CSV format
+
+        Automatically handles gzip-compressed files by detecting .gz extension.
 
         Returns:
             Polars DataFrame containing the input data
@@ -191,28 +229,33 @@ class PreViewData:
 
         try:
             df: pl.DataFrame
+            is_gzipped = _is_gzipped(self.input_file)
+            true_extension = _get_true_file_extension(self.input_file)
+
             # If a custom separator is provided, use it for CSV-like files
             if self.sep is not None:
                 if self.sep == "\\t":
-                    self.console.print(f"[dim]Reading TSV file: {self.input_file}[/dim]")
+                    self.console.print(f"[dim]Reading {'gzipped ' if is_gzipped else ''}TSV file: {self.input_file}[/dim]")
                     df = pl.read_csv(self.input_file, separator="\t")
                 else:
-                    self.console.print(f"[dim]Reading file with custom separator: {repr(self.sep)}[/dim]")
+                    prefix = "gzipped " if is_gzipped else ""
+                    self.console.print(f"[dim]Reading {prefix}file with custom separator: {repr(self.sep)}[/dim]")
                     df = pl.read_csv(self.input_file, separator=self.sep)
             else:
-                # Auto-detect format based on extension
-                file_extension = self.input_file.suffix.lower()
-
-                if file_extension == ".csv":
+                # Auto-detect format based on true extension (ignoring .gz)
+                if true_extension == ".csv":
                     df = pl.read_csv(self.input_file)
-                elif file_extension in [".xlsx", ".xls"]:
+                elif true_extension in [".xlsx", ".xls"]:
+                    if is_gzipped:
+                        raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
+
                     if self.sheet is not None:
                         self.console.print(f"[dim]Reading Excel file: {self.input_file}, sheet: {self.sheet}[/dim]")
                         df = pl.read_excel(self.input_file, sheet_name=self.sheet)
                     else:
                         self.console.print(f"[dim]Reading Excel file: {self.input_file}[/dim]")
                         df = pl.read_excel(self.input_file)
-                elif file_extension == ".tsv":
+                elif true_extension == ".tsv":
                     df = pl.read_csv(self.input_file, separator="\t")
                 else:
                     # Default to CSV format for unknown extensions

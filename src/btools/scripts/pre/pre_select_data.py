@@ -1,11 +1,63 @@
 #!/usr/bin/env python3
 """Script for selecting a subset of data from input files using pandas."""
 
+import gzip
+import os
 from pathlib import Path
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
 import polars as pl
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+
+def _get_true_file_extension(file_path: Path) -> str:
+    """Get the true file extension, handling .gz files properly.
+
+    For example:
+    - 'data.csv.gz' returns '.csv'
+    - 'data.tsv.gz' returns '.tsv'
+    - 'data.xlsx.gz' returns '.xlsx'
+    - 'data.csv' returns '.csv'
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        The true file extension (without .gz)
+    """
+    suffixes = file_path.suffixes
+    if len(suffixes) >= 2 and suffixes[-1].lower() == ".gz":
+        return suffixes[-2].lower()
+    elif len(suffixes) >= 1:
+        return suffixes[-1].lower()
+    else:
+        return ""
+
+
+def _is_gzipped(file_path: Path) -> bool:
+    """Check if a file is gzip compressed.
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        True if the file is gzip compressed
+    """
+    return file_path.suffix.lower() == ".gz"
+
+
+def _should_write_gzipped() -> bool:
+    """Check if output files should be gzip compressed based on environment variable.
+
+    Returns:
+        True if GZIP_OUT environment variable is set to True/true/1
+    """
+    gzip_out = os.getenv("GZIP_OUT", "False").lower()
+    return gzip_out in ("true", "1", "yes")
 
 
 class PreSelectDataPolars:
@@ -120,8 +172,13 @@ class PreSelectDataPolars:
 
         Note: The range suffix will be added later in the process method
         when we know the actual dimensions of the subset.
+
+        If GZIP_OUT environment variable is True, adds .gz extension.
         """
-        return self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+        base_name = self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+        if _should_write_gzipped():
+            return base_name.with_suffix(".csv.gz")
+        return base_name
 
     def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
         """Update output filename to include range information."""
@@ -136,10 +193,12 @@ class PreSelectDataPolars:
         """Read data from the input file using Polars.
 
         Supports multiple file formats:
-        - CSV files (.csv): Uses polars.read_csv with auto-detected or custom separator
-        - Excel files (.xlsx, .xls): Falls back to pandas then converts to Polars
-        - TSV files (.tsv): Uses polars.read_csv with tab separator
+        - CSV files (.csv, .csv.gz): Uses polars.read_csv with auto-detected or custom separator
+        - Excel files (.xlsx, .xls): Uses polars.read_excel (note: .gz not supported for Excel)
+        - TSV files (.tsv, .tsv.gz): Uses polars.read_csv with tab separator
         - Other formats: Defaults to CSV format
+
+        Automatically handles gzip-compressed files by detecting .gz extension.
 
         For Excel files, the sheet parameter controls which sheet to read:
         - If sheet is None: reads the first sheet (index 0)
@@ -158,21 +217,26 @@ class PreSelectDataPolars:
 
         try:
             df: pl.DataFrame
+            is_gzipped = _is_gzipped(self.input_file)
+            true_extension = _get_true_file_extension(self.input_file)
+
             # If a custom separator is provided, use it for CSV-like files
             if self.sep is not None:
                 if self.sep == "\\t":
-                    print(f"\tReading TSV file: {self.input_file}")
+                    print(f"\tReading {'gzipped ' if is_gzipped else ''}TSV file: {self.input_file}")
                     df = pl.read_csv(self.input_file, separator="\t", has_header=False)
                 else:
-                    print(f"\tReading file with custom separator:({self.sep})")
+                    prefix = "gzipped " if is_gzipped else ""
+                    print(f"\tReading {prefix}file with custom separator:({self.sep})")
                     df = pl.read_csv(self.input_file, separator=self.sep, has_header=False)
             else:
-                # Otherwise, auto-detect format based on extension
-                file_extension = self.input_file.suffix.lower()
-
-                if file_extension == ".csv":
+                # Auto-detect format based on true extension (ignoring .gz)
+                if true_extension == ".csv":
                     df = pl.read_csv(self.input_file, has_header=False)
-                elif file_extension in [".xlsx", ".xls"]:
+                elif true_extension in [".xlsx", ".xls"]:
+                    if is_gzipped:
+                        raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
+
                     # Use Polars read_excel function
                     if self.sheet is not None:
                         print(f"\tReading Excel file: {self.input_file}, sheet: {self.sheet}")
@@ -180,8 +244,7 @@ class PreSelectDataPolars:
                     else:
                         print(f"\tReading Excel file: {self.input_file}")
                         df = pl.read_excel(self.input_file, has_header=False)
-
-                elif file_extension == ".tsv":
+                elif true_extension == ".tsv":
                     df = pl.read_csv(self.input_file, separator="\t", has_header=False)
                 else:
                     # Default to CSV format for unknown extensions
@@ -314,10 +377,39 @@ class PreSelectDataPolars:
         print(f"Selected data shape: {shape_a},{actual_data_cols}")
         print(f"Saving to: {updated_output_file}")
 
-        # Save to CSV file using Polars
-        selected_df.write_csv(str(updated_output_file))
+        # Save to CSV file using Polars (with gzip support)
+        self._write_csv_file(selected_df, updated_output_file)
 
         print("Processing completed successfully!")
+
+    def _write_csv_file(self, df: pl.DataFrame, output_file: Path) -> None:
+        """Write DataFrame to CSV file, with optional gzip compression.
+
+        Args:
+            df: DataFrame to write
+            output_file: Path where to write the file
+        """
+        if output_file.suffix.lower() == ".gz":
+            # For gzip files, we need to write to a temporary file first, then compress
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as temp_file:
+                temp_path = Path(temp_file.name)
+
+            try:
+                # Write to temporary file
+                df.write_csv(str(temp_path))
+
+                # Compress to final destination
+                with open(temp_path, "rb") as f_in, gzip.open(output_file, "wb") as f_out:
+                    f_out.write(f_in.read())
+            finally:
+                # Clean up temporary file
+                if temp_path.exists():
+                    temp_path.unlink()
+        else:
+            # Regular CSV file
+            df.write_csv(str(output_file))
 
     def get_info(self) -> dict[str, str | int | None]:
         """Get information about the data selection parameters.
@@ -448,8 +540,13 @@ class PreSelectData:
 
         Note: The range suffix will be added later in the process method
         when we know the actual dimensions of the subset.
+
+        If GZIP_OUT environment variable is True, adds .gz extension.
         """
-        return self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+        base_name = self.input_file.with_stem(self.input_file.stem + "_subset").with_suffix(".csv")
+        if _should_write_gzipped():
+            return base_name.with_suffix(".csv.gz")
+        return base_name
 
     def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
         """Update output filename to include range information."""
@@ -464,10 +561,12 @@ class PreSelectData:
         """Read data from the input file.
 
         Supports multiple file formats:
-        - CSV files (.csv): Uses pandas.read_csv with auto-detected or custom separator
-        - Excel files (.xlsx, .xls): Uses pandas.read_excel with optional sheet selection
-        - TSV files (.tsv): Uses pandas.read_csv with tab separator
+        - CSV files (.csv, .csv.gz): Uses pandas.read_csv with auto-detected or custom separator
+        - Excel files (.xlsx, .xls): Uses pandas.read_excel with optional sheet selection (note: .gz not supported)
+        - TSV files (.tsv, .tsv.gz): Uses pandas.read_csv with tab separator
         - Other formats: Defaults to CSV format
+
+        Automatically handles gzip-compressed files by detecting .gz extension.
 
         For Excel files, the sheet parameter controls which sheet to read:
         - If sheet is None: reads the first sheet (index 0)
@@ -485,27 +584,33 @@ class PreSelectData:
             raise FileNotFoundError(f"Input file not found: {self.input_file}")
 
         try:
+            is_gzipped = _is_gzipped(self.input_file)
+            true_extension = _get_true_file_extension(self.input_file)
+
             # If a custom separator is provided, use it for CSV-like files
             if self.sep is not None:
                 if self.sep == "\\t":
-                    print(f"\tReading TSV file: {self.input_file}")
+                    prefix = "gzipped " if is_gzipped else ""
+                    print(f"\tReading {prefix}TSV file: {self.input_file}")
                     return pd.read_csv(self.input_file, sep="\t", header=None, low_memory=False)  # type: ignore[call-overload]
-                print(f"\tReading file with custom separator:({self.sep})")
+                prefix = "gzipped " if is_gzipped else ""
+                print(f"\tReading {prefix}file with custom separator:({self.sep})")
                 return pd.read_csv(self.input_file, sep=self.sep, header=None, low_memory=False)  # type: ignore[call-overload]
 
-            # Otherwise, auto-detect format based on extension
-            file_extension = self.input_file.suffix.lower()
-
-            if file_extension == ".csv":
+            # Auto-detect format based on true extension (ignoring .gz)
+            if true_extension == ".csv":
                 return pd.read_csv(self.input_file, header=None, low_memory=False)  # type: ignore[call-overload]
-            elif file_extension in [".xlsx", ".xls"]:
+            elif true_extension in [".xlsx", ".xls"]:
+                if is_gzipped:
+                    raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
+
                 sheet_name = self.sheet if self.sheet is not None else 0
                 if self.sheet is not None:
                     print(f"\tReading Excel file: {self.input_file}, sheet: {self.sheet}")
                 else:
                     print(f"\tReading Excel file: {self.input_file}")
                 return pd.read_excel(self.input_file, sheet_name=sheet_name, header=None)  # type: ignore[call-overload]
-            elif file_extension == ".tsv":
+            elif true_extension == ".tsv":
                 return pd.read_csv(self.input_file, sep="\t", header=None, low_memory=False)  # type: ignore[call-overload]
             else:
                 # Default to CSV format for unknown extensions
@@ -584,6 +689,19 @@ class PreSelectData:
 
         return result_df
 
+    def _write_csv_file(self, df: pd.DataFrame, file_path: Path) -> None:  # type: ignore[type-arg]
+        """Write DataFrame to CSV file, with optional gzip compression.
+
+        Args:
+            df: DataFrame to write
+            file_path: Output file path
+        """
+        if file_path.suffix == ".gz":
+            # Use pandas' built-in compression support for gzipped output
+            df.to_csv(file_path, compression="gzip")  # type: ignore[call-overload]
+        else:
+            df.to_csv(file_path)  # type: ignore[call-overload]
+
     def process(self) -> None:
         """Process the input file and save the selected subset to output file."""
         print(f"Reading data from: {self.input_file}")
@@ -616,8 +734,8 @@ class PreSelectData:
         print(f"Selected data shape: {selected_df.shape}")
         print(f"Saving to: {updated_output_file}")
 
-        # Save to CSV file
-        selected_df.to_csv(updated_output_file)  # type: ignore[call-overload]
+        # Save to CSV file (with optional gzip compression)
+        self._write_csv_file(selected_df, updated_output_file)
 
         print("Processing completed successfully!")
 
