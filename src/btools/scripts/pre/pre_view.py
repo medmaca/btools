@@ -2,13 +2,58 @@
 """Script for quickly viewing and profiling datasets using Polars."""
 
 import contextlib
+import os
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 import tomli_w
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
+
+# Load environment variables from .env files with priority order:
+# 1. Package directory (for defaults)
+# 2. Current working directory
+# 3. Home directory (highest priority, overrides others)
+
+# Get the package directory (where this script is located)
+package_dir = Path(__file__).parent.parent.parent.parent
+
+# Load .env files in order (later loads override earlier ones)
+load_dotenv(dotenv_path=package_dir / ".env", override=False)  # Package defaults
+load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)  # Current directory
+load_dotenv(dotenv_path=Path.home() / ".env", override=True)  # User home directory (highest priority)
+
+
+class ViewConfig:
+    """Configuration class for pre_view display modes."""
+
+    def __init__(self):
+        """Initialize configuration from environment variables."""
+        # Auto mode thresholds
+        self.auto_normal_max_cols = int(os.getenv("VIEW_AUTO_NORMAL_MAX_COLS", "5"))
+        self.auto_rotated_max_cols = int(os.getenv("VIEW_AUTO_ROTATED_MAX_COLS", "10"))
+
+        # Normal mode settings
+        self.normal_max_col_width = int(os.getenv("VIEW_NORMAL_MAX_COL_WIDTH", "20"))
+        self.normal_max_cell_length = int(os.getenv("VIEW_NORMAL_MAX_CELL_LENGTH", "18"))
+
+        # Rotated headers mode settings
+        self.rotated_max_col_width = int(os.getenv("VIEW_ROTATED_MAX_COL_WIDTH", "12"))
+        self.rotated_max_cell_length = int(os.getenv("VIEW_ROTATED_MAX_CELL_LENGTH", "10"))
+        self.rotated_header_max_length = int(os.getenv("VIEW_ROTATED_HEADER_MAX_LENGTH", "8"))
+
+        # Wrapped mode settings
+        self.wrapped_cols_per_section = int(os.getenv("VIEW_WRAPPED_COLS_PER_SECTION", "5"))
+        self.wrapped_max_col_width = int(os.getenv("VIEW_WRAPPED_MAX_COL_WIDTH", "15"))
+        self.wrapped_max_cell_length = int(os.getenv("VIEW_WRAPPED_MAX_CELL_LENGTH", "13"))
+
+        # General display settings
+        self.default_rows = int(os.getenv("VIEW_DEFAULT_ROWS", "10"))
+        self.max_rows = int(os.getenv("VIEW_MAX_ROWS", "1000"))
+        self.ellipsis_string = os.getenv("VIEW_ELLIPSIS_STRING", "...")
+        self.null_display_style = os.getenv("VIEW_NULL_DISPLAY_STYLE", "dim red")
 
 
 class PreViewData:
@@ -62,6 +107,7 @@ class PreViewData:
         self.show_missing = show_missing
         self.display_mode = display_mode
         self.console = Console()
+        self.config = ViewConfig()
 
     def _parse_rows_parameter(self) -> tuple[int, int | None]:
         """Parse rows parameter into start and end positions.
@@ -317,10 +363,10 @@ class PreViewData:
 
         # Determine display mode
         if self.display_mode == "auto":
-            # Adaptive display based on number of columns
-            if num_cols <= 5:
+            # Adaptive display based on number of columns using config values
+            if num_cols <= self.config.auto_normal_max_cols:
                 return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
-            elif num_cols <= 10:
+            elif num_cols <= self.config.auto_rotated_max_cols:
                 return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
             else:
                 return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
@@ -356,18 +402,19 @@ class PreViewData:
 
         # Add columns with normal headers
         for col_name in display_df.columns:
-            table.add_column(col_name, style="white", max_width=20, overflow="ellipsis")
+            table.add_column(col_name, style="white", max_width=self.config.normal_max_col_width, overflow="ellipsis")
 
         # Add rows
         for row in display_df.iter_rows():
             formatted_row: list[str] = []
             for val in row:
                 if val is None:
-                    formatted_row.append("[dim red]null[/dim red]")
+                    formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
                 else:
                     str_val = str(val)
-                    if len(str_val) > 18:
-                        str_val = str_val[:15] + "..."
+                    if len(str_val) > self.config.normal_max_cell_length:
+                        truncate_len = self.config.normal_max_cell_length - len(self.config.ellipsis_string)
+                        str_val = str_val[:truncate_len] + self.config.ellipsis_string
                     formatted_row.append(str_val)
             table.add_row(*formatted_row)
 
@@ -391,20 +438,32 @@ class PreViewData:
         # Add columns with rotated headers (using vertical text approximation)
         for col_name in display_df.columns:
             # Create a vertical-style header by putting each character on a new "line" using spaces
-            rotated_header = col_name[:6] + ".." if len(col_name) > 8 else col_name
+            max_header_len = self.config.rotated_header_max_length
+            rotated_header = (
+                col_name[: max_header_len - len(self.config.ellipsis_string[:2])] + self.config.ellipsis_string[:2]
+                if len(col_name) > max_header_len
+                else col_name
+            )
 
-            table.add_column(rotated_header, style="white", max_width=12, overflow="ellipsis", justify="center")
+            table.add_column(
+                rotated_header,
+                style="white",
+                max_width=self.config.rotated_max_col_width,
+                overflow="ellipsis",
+                justify="center",
+            )
 
         # Add rows
         for row in display_df.iter_rows():
             formatted_row: list[str] = []
             for val in row:
                 if val is None:
-                    formatted_row.append("[dim red]null[/dim red]")
+                    formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
                 else:
                     str_val = str(val)
-                    if len(str_val) > 10:
-                        str_val = str_val[:8] + ".."
+                    if len(str_val) > self.config.rotated_max_cell_length:
+                        truncate_len = self.config.rotated_max_cell_length - len(self.config.ellipsis_string[:2])
+                        str_val = str_val[:truncate_len] + self.config.ellipsis_string[:2]
                     formatted_row.append(str_val)
             table.add_row(*formatted_row)
 
@@ -415,7 +474,7 @@ class PreViewData:
     ) -> Table:
         """Create multiple tables wrapping columns across sections."""
         tables: list[Table] = []
-        cols_per_section = 5
+        cols_per_section = self.config.wrapped_cols_per_section
         total_cols = len(display_df.columns)
 
         for section_start in range(0, total_cols, cols_per_section):
@@ -432,18 +491,19 @@ class PreViewData:
 
             # Add columns for this section
             for col_name in section_df.columns:
-                table.add_column(col_name, style="white", max_width=15, overflow="ellipsis")
+                table.add_column(col_name, style="white", max_width=self.config.wrapped_max_col_width, overflow="ellipsis")
 
             # Add rows for this section
             for row in section_df.iter_rows():
                 formatted_row: list[str] = []
                 for val in row:
                     if val is None:
-                        formatted_row.append("[dim red]null[/dim red]")
+                        formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
                     else:
                         str_val = str(val)
-                        if len(str_val) > 13:
-                            str_val = str_val[:10] + "..."
+                        if len(str_val) > self.config.wrapped_max_cell_length:
+                            truncate_len = self.config.wrapped_max_cell_length - len(self.config.ellipsis_string)
+                            str_val = str_val[:truncate_len] + self.config.ellipsis_string
                         formatted_row.append(str_val)
                 table.add_row(*formatted_row)
 
