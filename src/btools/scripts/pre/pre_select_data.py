@@ -126,6 +126,10 @@ class PreSelectDataPolars:
                     # Default to CSV format for unknown extensions
                     df = pl.read_csv(self.input_file, has_header=False)
 
+            # Rename columns to generic names for consistency
+            num_cols = df.width
+            df = df.rename({f"column_{i}": f"column_{i}" for i in range(num_cols)})
+
             return df
 
         except Exception as e:
@@ -339,15 +343,15 @@ class PreSelectData:
             if self.sep is not None:
                 if self.sep == "\\t":
                     print(f"\tReading TSV file: {self.input_file}")
-                    return pd.read_csv(self.input_file, sep="\t", header=None)  # type: ignore[call-overload]
+                    return pd.read_csv(self.input_file, sep="\t", header=None, low_memory=False)  # type: ignore[call-overload]
                 print(f"\tReading file with custom separator:({self.sep})")
-                return pd.read_csv(self.input_file, sep=self.sep, header=None)  # type: ignore[call-overload]
+                return pd.read_csv(self.input_file, sep=self.sep, header=None, low_memory=False)  # type: ignore[call-overload]
 
             # Otherwise, auto-detect format based on extension
             file_extension = self.input_file.suffix.lower()
 
             if file_extension == ".csv":
-                return pd.read_csv(self.input_file, header=None)  # type: ignore[call-overload]
+                return pd.read_csv(self.input_file, header=None, low_memory=False)  # type: ignore[call-overload]
             elif file_extension in [".xlsx", ".xls"]:
                 sheet_name = self.sheet if self.sheet is not None else 0
                 if self.sheet is not None:
@@ -356,10 +360,10 @@ class PreSelectData:
                     print(f"\tReading Excel file: {self.input_file}")
                 return pd.read_excel(self.input_file, sheet_name=sheet_name, header=None)  # type: ignore[call-overload]
             elif file_extension == ".tsv":
-                return pd.read_csv(self.input_file, sep="\t", header=None)  # type: ignore[call-overload]
+                return pd.read_csv(self.input_file, sep="\t", header=None, low_memory=False)  # type: ignore[call-overload]
             else:
                 # Default to CSV format for unknown extensions
-                return pd.read_csv(self.input_file, header=None)  # type: ignore[call-overload]
+                return pd.read_csv(self.input_file, header=None, low_memory=False)  # type: ignore[call-overload]
 
         except Exception as e:
             raise OSError(f"Error reading file {self.input_file}: {str(e)}") from e
