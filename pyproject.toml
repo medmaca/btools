@@ -1,17 +1,77 @@
 [project]
 name = "btools"
 version = "0.1.0"
-description = "Add your description here"
+description = "Package for bioinformatics tools"
 readme = "README.md"
-authors = [
-    { name = "medmaca", email = "matthew.care@gmail.com" }
-]
+authors = [{ name = "medmaca", email = "matthew.care@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["click>=8.2.1"]
 
 [project.scripts]
-btools = "btools:main"
+btools = "btools.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.36.0",
+    "pyright>=1.1.403",
+    "pytest>=8.4.1",
+    "ruff>=0.12.3",
+]
+
+
+#############################
+#     ruff configuration    #
+#############################
+[tool.ruff]
+# Run with `uv run ruff check` or `uv run poe lint`
+# Format with `uv run ruff format` or `uv run poe fmt`
+target-version = "py311" # lowest supported version
+line-length = 125
+
+[tool.ruff.lint]
+select = [
+    "A",    # flake8-builtins
+    "E",    # pycodestyle
+    "F",    # Pyflakes
+    "N",    # flake8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "I",    # isort
+    "D",    # Pydocstyle - checks compliance with docstring convention
+    "T100", # breakpoints
+]
+ignore = [
+    "D301", # Ignore "Use `r"""` if any backslashes in a docstring" to be able to use \b in docstring of Click commands
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+#############################
+#   pyright configuration   #
+#############################
+[tool.pyright]
+# Run with `uv run pyright` or `uv run poe check`
+venvPath = "."         # uv installs the venv in the current dir
+venv = ".venv"         # in a folder called ".venv"
+strict = ["**/*.py"]   # use 'strict' checking on all files
+pythonVersion = "3.10" # if library, specify the _lowest_ supported version
+
+#############################
+#     poe configuration     #
+#############################
+[tool.poe.tasks]
+# run with eg `uv run poe fmt`
+fmt = "ruff format"
+lint = "ruff check --fix"
+check = "pyright"
+test = "pytest"
+# run all the above
+all = [{ ref = "fmt" }, { ref = "lint" }, { ref = "check" }, { ref = "test" }]
+"ci:fmt" = "ruff format --check"                                               # fail if not formatted
+"ci:lint" = "ruff check"
