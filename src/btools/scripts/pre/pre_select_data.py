@@ -409,10 +409,12 @@ class PreSelectDataPolars:
         # Concatenate all row ranges
         final_data: pl.DataFrame = all_data_rows[0] if len(all_data_rows) == 1 else pl.concat(all_data_rows, how="vertical")
 
-        # Rename columns to use the headers we extracted
+        # Rename columns to use the headers we extracted, making sure column names are unique
         if len(selected_columns) == len(column_headers):
+            # Make column headers unique by adding suffixes to duplicates
+            unique_headers = self._make_column_names_unique(column_headers)
             column_mapping: dict[str, str] = {
-                old_name: new_name for old_name, new_name in zip(selected_columns, column_headers, strict=True)
+                old_name: new_name for old_name, new_name in zip(selected_columns, unique_headers, strict=True)
             }
             final_data = final_data.rename(column_mapping)
 
@@ -439,8 +441,9 @@ class PreSelectDataPolars:
             Transposed Polars DataFrame with generic column names
         """
         try:
-            # Use Polars' efficient built-in transpose method
-            transposed_df = df.transpose()
+            # Use Polars' transpose method with include_header=False to avoid duplicate column name issues
+            # This ensures we get generic column names instead of using potentially duplicate data values
+            transposed_df = df.transpose(include_header=False)
 
             # Rename columns to follow the generic naming convention (column_1, column_2, etc.)
             # This ensures consistency with the rest of the code that expects 1-based indexing
@@ -555,6 +558,28 @@ class PreSelectDataPolars:
             "transpose": self.transpose,
             "index_separator": self.index_separator,
         }
+
+    def _make_column_names_unique(self, column_headers: list[str]) -> list[str]:
+        """Make column names unique by adding suffixes to duplicates.
+
+        Args:
+            column_headers: List of column header names that may contain duplicates
+
+        Returns:
+            List of unique column names with suffixes added to duplicates
+        """
+        unique_headers: list[str] = []
+        seen_names: dict[str, int] = {}
+
+        for header in column_headers:
+            if header not in seen_names:
+                seen_names[header] = 0
+                unique_headers.append(header)
+            else:
+                seen_names[header] += 1
+                unique_headers.append(f"{header}_{seen_names[header]}")
+
+        return unique_headers
 
 
 def main():
