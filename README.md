@@ -1,3 +1,33 @@
+- [btools](#btools)
+  - [Description](#description)
+  - [Features](#features)
+  - [Installation](#installation)
+    - [Using uv (Recommended)](#using-uv-recommended)
+  - [Usage](#usage)
+    - [Command Line Interface](#command-line-interface)
+      - [Data Viewing and Profiling](#data-viewing-and-profiling)
+      - [Data Selection with Multi-Range Support](#data-selection-with-multi-range-support)
+    - [Configuration System](#configuration-system)
+      - [Available Configuration Variables](#available-configuration-variables)
+      - [Example Configuration](#example-configuration)
+    - [Python API](#python-api)
+      - [Data Selection with PreSelectDataPolars](#data-selection-with-preselectdatapolars)
+      - [Data Viewing and Profiling with PreViewData](#data-viewing-and-profiling-with-previewdata)
+      - [Advanced Data Viewing](#advanced-data-viewing)
+      - [Working with Different File Formats](#working-with-different-file-formats)
+      - [Advanced Multi-Range Usage](#advanced-multi-range-usage)
+  - [Development](#development)
+    - [Setting up the Development Environment](#setting-up-the-development-environment)
+    - [Running Tests](#running-tests)
+    - [Code Quality](#code-quality)
+    - [Available poe Tasks](#available-poe-tasks)
+  - [Project Structure](#project-structure)
+  - [API Reference](#api-reference)
+    - [PreSelectDataPolars](#preselectdatapolars)
+    - [PreViewData](#previewdata)
+  - [License](#license)
+  - [Author](#author)
+
 # btools
 
 A comprehensive package for bioinformatics tools and data processing utilities with advanced multi-range selection capabilities.
@@ -560,48 +590,6 @@ A Polars-based data viewer and profiler for fast dataset exploration.
 - `show_types`: Show data types and missing value info
 - `show_missing`: Show missing value analysis
 
-## Breaking Changes
-
-### Version 2.0.0 - Multi-Range Update
-
-**Range Format Change:**
-
-- **Old format**: `"1,5"` (comma-separated start,end)
-- **New format**: `"1:5"` (colon-separated start:end)
-- **Reason**: Enables multi-range support with comma separation
-
-**Migration Guide:**
-
-```bash
-# Old syntax
-btools pre select_data data.csv --col-start "1,50" --row-start "10,100"
-
-# New syntax  
-btools pre select_data data.csv --col-start "1:50" --row-start "10:100"
-
-# New multi-range capabilities
-btools pre select_data data.csv --col-start "1:10,20:30" --row-start "1:50,100:150"
-```
-
-**Filename Changes:**
-
-- Multi-range operations now include `_msc` and/or `_msr` suffixes
-- Single range operations maintain the same naming pattern
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes and add tests
-4. Ensure all tests pass and code quality checks succeed:
-
-   ```bash
-   uv run poe all
-   ```
-
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
 
 ## License
 
