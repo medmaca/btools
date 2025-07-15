@@ -518,37 +518,28 @@ class PreSelectDataPolars:
     def _write_csv_file(self, df: pl.DataFrame, output_file: Path, original_headers: list[str]) -> None:
         """Write DataFrame to CSV file, with optional gzip compression.
 
-        Writes the file with include_header=False and prepends the original headers
-        to preserve duplicate column names without Polars modification.
+        Inserts the original headers as the first row and uses Polars' native CSV writing.
+        For gzip files, writes directly to gzip binary stream.
 
         Args:
             df: DataFrame to write (with generic column names)
             output_file: Path where to write the file
             original_headers: List of original column headers to write as first row
         """
-        import io
+        # Create a header row DataFrame with the original headers
+        header_row = pl.DataFrame([original_headers], schema=df.schema, orient="row")
 
-        # Create CSV content with original headers
-        csv_buffer = io.StringIO()
-
-        # Write original headers as first line
-        csv_buffer.write(",".join(original_headers) + "\n")
-
-        # Write data without headers to buffer
-        df.write_csv(csv_buffer, include_header=False)
-
-        # Get the complete CSV content
-        csv_content = csv_buffer.getvalue()
-        csv_buffer.close()
+        # Concatenate header row with data
+        df_with_headers = pl.concat([header_row, df], how="vertical")
 
         if output_file.suffix.lower() == ".gz":
-            # For gzip files, compress the content
-            with gzip.open(output_file, "wt", encoding="utf-8") as f_out:
-                f_out.write(csv_content)
+            # For gzip files, write directly to gzip binary stream
+
+            with gzip.open(output_file, "wb") as f:
+                df_with_headers.write_csv(f, include_header=False)  # type: ignore
         else:
-            # Regular CSV file
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(csv_content)
+            # Regular CSV file - Polars handles this efficiently
+            df_with_headers.write_csv(str(output_file), include_header=False)
 
     def get_info(self) -> dict[str, str | int | None | bool]:
         """Get information about the data selection parameters.

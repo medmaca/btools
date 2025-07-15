@@ -1,0 +1,5 @@
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/__pycache__"]
+reportPrivateUsage = false
+pythonVersion = "3.13"
