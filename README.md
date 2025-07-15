@@ -3,8 +3,6 @@
   - [Features](#features)
   - [Installation](#installation)
     - [Using uv (Recommended)](#using-uv-recommended)
-    - [Using pip](#using-pip)
-  - [Requirements](#requirements)
   - [Usage](#usage)
     - [Command Line Interface](#command-line-interface)
       - [Data Viewing and Profiling](#data-viewing-and-profiling)
@@ -13,8 +11,7 @@
       - [Available Configuration Variables](#available-configuration-variables)
       - [Example Configuration](#example-configuration)
     - [Python API](#python-api)
-      - [Data Selection with PreSelectData (pandas)](#data-selection-with-preselectdata-pandas)
-      - [Data Selection with PreSelectDataPolars (faster)](#data-selection-with-preselectdatapolars-faster)
+      - [Data Selection with PreSelectDataPolars](#data-selection-with-preselectdatapolars)
       - [Data Viewing and Profiling with PreViewData](#data-viewing-and-profiling-with-previewdata)
       - [Advanced Data Viewing](#advanced-data-viewing)
       - [Working with Different File Formats](#working-with-different-file-formats)
@@ -27,7 +24,6 @@
   - [Project Structure](#project-structure)
   - [API Reference](#api-reference)
     - [PreViewData](#previewdata)
-    - [PreSelectData](#preselectdata)
     - [PreSelectDataPolars](#preselectdatapolars)
   - [Contributing](#contributing)
   - [License](#license)
@@ -39,7 +35,7 @@ A comprehensive package for bioinformatics tools and data processing utilities.
 
 ## Description
 
-btools is a Python package that provides efficient tools for bioinformatics data processing, with a focus on data selection, manipulation, and analysis. The package leverages both pandas and Polars for optimal performance when working with large datasets.
+btools is a Python package that provides efficient tools for bioinformatics data processing, with a focus on data selection, manipulation, and analysis. The package leverages Polars for optimal performance when working with large datasets.
 
 ## Features
 
@@ -47,7 +43,7 @@ btools is a Python package that provides efficient tools for bioinformatics data
 - **Data Viewing & Profiling**: Fast dataset exploration with rich terminal output and detailed analysis
 - **Configurable Display Modes**: Multiple display options (auto, normal, rotated, wrapped) for optimal data visualization
 - **TOML Export**: Generate detailed dataset reports with statistics and metadata
-- **Dual Engine Support**: Choose between pandas and Polars for data processing based on your performance needs
+- **Fast Data Processing**: Uses Polars for efficient data manipulation and analysis
 - **Flexible File Handling**: Support for multiple delimiters and Excel sheets
 - **Environment Configuration**: Customizable display settings via .env files with priority-based loading
 - **Command Line Interface**: Easy-to-use CLI for common data processing tasks
@@ -73,23 +69,6 @@ uv pip install -e .
 # From GitHub
 uv pip install git+ssh://git@github.com/medmaca/btools.git
 ```
-
-### Using pip
-
-```bash
-pip install btools
-```
-
-## Requirements
-
-- Python >= 3.13
-- pandas >= 2.0.0
-- polars >= 1.31.0
-- click >= 8.2.1
-- fastexcel >= 0.14.0
-- python-dotenv >= 1.0.0
-- rich >= 13.0.0
-- tomli-w >= 1.0.0
 
 ## Usage
 
@@ -245,26 +224,7 @@ VIEW_OUT_UNIQUE_MAX=5
 
 ### Python API
 
-#### Data Selection with PreSelectData (pandas)
-
-```python
-from btools.scripts.pre.pre_select_data import PreSelectData
-
-# Basic usage - select subset of data
-selector = PreSelectData(
-    input_file="data.csv",
-    output_file="subset.csv",
-    index_col=0,        # Use first column as index
-    col_start=1,        # Start output from column 1
-    row_start=1         # Start output from row 1
-)
-
-# Process the data
-data = selector.process()
-print(data.head())
-```
-
-#### Data Selection with PreSelectDataPolars (faster)
+#### Data Selection with PreSelectDataPolars
 
 ```python
 from btools.scripts.pre.pre_select_data import PreSelectDataPolars
@@ -340,20 +300,20 @@ print(f"Viewer config: {info}")
 
 ```python
 # Excel files
-excel_selector = PreSelectData(
+excel_selector = PreSelectDataPolars(
     input_file="data.xlsx",
     sheet="Sheet1",  # Specify sheet name
     sep=None         # Auto-detect separator
 )
 
 # Custom delimited files
-custom_selector = PreSelectData(
+custom_selector = PreSelectDataPolars(
     input_file="data.txt",
     sep="|"  # Pipe-delimited file
 )
 
 # TSV files
-tsv_selector = PreSelectData(
+tsv_selector = PreSelectDataPolars(
     input_file="data.tsv",
     sep="\t"  # Tab-separated
 )
@@ -493,24 +453,13 @@ A Polars-based data viewer and profiler for fast dataset exploration.
 - `show_types`: Show data types and missing value info
 - `show_missing`: Show missing value analysis
 
-### PreSelectData
+### PreSelectDataPolars
 
-A pandas-based data selector for general use cases.
+A Polars-based data selector optimized for large datasets and high performance.
 
 **Methods:**
 
 - `process()`: Process the input file and return selected data
-- `get_info()`: Get information about the processed data
-- `read_data()`: Read data from the input file
-- `select_subset()`: Select a subset of the data
-
-### PreSelectDataPolars
-
-A Polars-based data selector optimized for large datasets.
-
-**Methods:**
-
-- `process()`: Process the input file and return selected data (faster than pandas)
 - `get_info()`: Get information about the processed data
 - `read_data()`: Read data from the input file using Polars
 - `select_subset()`: Select a subset of the data with better memory efficiency
