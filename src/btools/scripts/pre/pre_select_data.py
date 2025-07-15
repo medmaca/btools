@@ -76,6 +76,7 @@ class PreSelectDataPolars:
         row_start: int | str = 1,
         sep: str | None = None,
         sheet: str | None = None,
+        transpose: bool = False,
         index_separator: str = "#",
     ):
         """Initialize the PreSelectDataPolars class.
@@ -94,6 +95,7 @@ class PreSelectDataPolars:
                       (e.g., "1:10,20:30") to select and concatenate multiple row ranges (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
             sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
+            transpose: Whether to transpose the data before applying row/column selections (default: False)
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
         """
         self.input_file = Path(input_file)
@@ -104,6 +106,7 @@ class PreSelectDataPolars:
         self.row_start = row_start
         self.sep = sep
         self.sheet = sheet
+        self.transpose = transpose
         self.index_separator = index_separator
 
     def _parse_index_columns(self) -> list[int]:
@@ -300,9 +303,17 @@ class PreSelectDataPolars:
                     # Default to CSV format for unknown extensions
                     df = pl.read_csv(self.input_file, has_header=False)
 
-            # Rename columns to generic names for consistency
+            # Rename columns to generic names for consistency (1-based indexing)
+            # Check if columns are already properly named or need renaming
             num_cols = df.width
-            df = df.rename({f"column_{i}": f"column_{i}" for i in range(num_cols)})
+            current_columns = df.columns
+
+            # If columns are already named column_1, column_2, etc., no need to rename
+            expected_columns = [f"column_{i + 1}" for i in range(num_cols)]
+            if current_columns != expected_columns:
+                # Create mapping from current names to expected names
+                column_mapping = {current_columns[i]: f"column_{i + 1}" for i in range(num_cols)}
+                df = df.rename(column_mapping)
 
             return df
 
@@ -414,6 +425,33 @@ class PreSelectDataPolars:
 
         return result_df
 
+    def _transpose_data(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Transpose the DataFrame using Polars' built-in transpose method.
+
+        This converts the DataFrame so that rows become columns and columns become rows.
+        After transposition, we ensure the column names follow the standard generic naming
+        convention used by the rest of the code.
+
+        Args:
+            df: Input Polars DataFrame
+
+        Returns:
+            Transposed Polars DataFrame with generic column names
+        """
+        try:
+            # Use Polars' efficient built-in transpose method
+            transposed_df = df.transpose()
+
+            # Rename columns to follow the generic naming convention (column_1, column_2, etc.)
+            # This ensures consistency with the rest of the code that expects 1-based indexing
+            column_mapping = {old_name: f"column_{i + 1}" for i, old_name in enumerate(transposed_df.columns)}
+            transposed_df = transposed_df.rename(column_mapping)
+
+            return transposed_df
+
+        except Exception as e:
+            raise ValueError(f"Error during transpose operation: {e}") from e
+
     def process(self) -> None:
         """Process the input file and save the selected subset to output file."""
         print(f"Reading data from: {self.input_file}")
@@ -424,12 +462,19 @@ class PreSelectDataPolars:
 
         df = self._read_data()
 
+        # Apply transpose if requested
+        if self.transpose:
+            print("Transposing data...")
+            df = self._transpose_data(df)
+
         print(f"Original data shape: {df.shape}")
         print("Selecting subset with parameters:")
         print(f"  - Index column: {self.index_col}")
         print(f"  - Column start: {self.col_start}")
         print(f"  - Row index (header): {self.row_index}")
         print(f"  - Row start: {self.row_start}")
+        if self.transpose:
+            print("  - Data was transposed before selection")
 
         selected_df = self._select_subset(df)
         shape_a, shape_b = selected_df.shape
@@ -492,7 +537,7 @@ class PreSelectDataPolars:
             # Regular CSV file
             df.write_csv(str(output_file))
 
-    def get_info(self) -> dict[str, str | int | None]:
+    def get_info(self) -> dict[str, str | int | None | bool]:
         """Get information about the data selection parameters.
 
         Returns:
@@ -507,6 +552,7 @@ class PreSelectDataPolars:
             "row_start": self.row_start,
             "sep": self.sep,
             "sheet": self.sheet,
+            "transpose": self.transpose,
             "index_separator": self.index_separator,
         }
 

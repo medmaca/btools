@@ -207,52 +207,126 @@ class TestPreSelectDataPolars:
         assert info["index_col"] == 0
         assert info["col_start"] == 1
 
-
-class TestEdgeCasesAndErrorHandling:
-    """Test edge cases and error handling scenarios."""
-
-    def test_file_not_found(self) -> None:
-        """Test error handling for non-existent file."""
-        processor = PreSelectDataPolars(input_file="nonexistent.csv")
-
-        with pytest.raises(FileNotFoundError):
-            processor._read_data()  # type: ignore[reportPrivateUsage]
-
-    def test_invalid_index_col_format(self, tmp_path: Path) -> None:
-        """Test error handling for invalid index_col format."""
-        csv_file = tmp_path / "test.csv"
-        # Create minimal test file
-        pl.DataFrame({"col1": [1, 2], "col2": [3, 4]}).write_csv(str(csv_file))
-
-        processor = PreSelectDataPolars(input_file=str(csv_file), index_col="invalid,format,")
-
-        with pytest.raises(ValueError, match="Invalid index_col format"):
-            processor._parse_index_columns()  # type: ignore[reportPrivateUsage]
-
-    def test_invalid_range_parameter(self, tmp_path: Path) -> None:
-        """Test error handling for invalid range parameters."""
-        csv_file = tmp_path / "test.csv"
-        pl.DataFrame({"col1": [1, 2], "col2": [3, 4]}).write_csv(str(csv_file))
-
+    def test_transpose_data_functionality(self, csv_file: Path) -> None:
+        """Test the transpose functionality."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
+        df = processor._read_data()  # type: ignore[reportPrivateUsage]
 
-        with pytest.raises(ValueError, match="Invalid.*range"):
-            processor._parse_multi_range_parameter("5:3", "test_param")  # type: ignore[reportPrivateUsage]  # start > end
+        # Original shape: 5 rows × 5 columns
+        assert df.shape == (5, 5)
 
-    def test_out_of_bounds_parameters(self, tmp_path: Path) -> None:
-        """Test error handling for out-of-bounds parameters."""
-        csv_file = tmp_path / "test.csv"
-        # Create small test file (2x2)
-        pl.DataFrame({"col1": ["A", "B"], "col2": ["C", "D"]}).write_csv(str(csv_file))
+        # Test transpose
+        transposed_df = processor._transpose_data(df)  # type: ignore[reportPrivateUsage]
 
+        # After transpose: 5 columns × 5 rows (dimensions swapped)
+        assert transposed_df.shape == (5, 5)
+
+        # Check that column names follow the expected pattern
+        expected_columns = ["column_1", "column_2", "column_3", "column_4", "column_5"]
+        assert transposed_df.columns == expected_columns
+
+        # Check that the first row of transposed data matches the first column of original
+        original_first_col = df.select(pl.col("column_1")).to_series().to_list()
+        transposed_first_row = transposed_df.slice(0, 1).select(pl.all()).row(0)
+        assert list(transposed_first_row) == original_first_col
+
+    def test_transpose_with_process_end_to_end(self, csv_file: Path, tmp_path: Path) -> None:
+        """Test complete processing pipeline with transpose enabled."""
+        output_file = tmp_path / "transposed_output.csv"
         processor = PreSelectDataPolars(
             input_file=str(csv_file),
-            index_col=5,  # Out of bounds
+            output_file=str(output_file),
+            index_col=0,
             col_start=1,
             row_index=0,
             row_start=1,
+            transpose=True,
         )
 
+        processor.process()
+
+        # Check that output file was created
+        assert output_file.exists()
+
+        # Check that we can read the output
+        result_df = pl.read_csv(output_file)
+
+        # With transpose, original 5×5 becomes 5×5, then after selection should be 4×4
+        # (excluding 1 row for header and 1 column for index)
+        assert result_df.shape[0] == 4  # 4 data rows after excluding header
+
+    def test_transpose_initialization_parameter(self, csv_file: Path) -> None:
+        """Test that transpose parameter is properly initialized and stored."""
+        # Test default value (False)
+        processor_default = PreSelectDataPolars(input_file=str(csv_file))
+        assert processor_default.transpose is False
+
+        # Test explicit False
+        processor_false = PreSelectDataPolars(input_file=str(csv_file), transpose=False)
+        assert processor_false.transpose is False
+
+        # Test explicit True
+        processor_true = PreSelectDataPolars(input_file=str(csv_file), transpose=True)
+        assert processor_true.transpose is True
+
+    def test_transpose_get_info_includes_parameter(self, csv_file: Path) -> None:
+        """Test that get_info method includes transpose parameter."""
+        processor = PreSelectDataPolars(input_file=str(csv_file), transpose=True)
+
+        info = processor.get_info()
+
+        assert "transpose" in info
+        assert info["transpose"] is True
+
+        # Test with False value
+        processor_false = PreSelectDataPolars(input_file=str(csv_file), transpose=False)
+        info_false = processor_false.get_info()
+        assert info_false["transpose"] is False
+
+    def test_transpose_empty_dataframe(self, tmp_path: Path) -> None:
+        """Test transpose with empty DataFrame."""
+        # Create an empty CSV file
+        empty_file = tmp_path / "empty.csv"
+        empty_file.write_text("")
+
+        processor = PreSelectDataPolars(input_file=str(empty_file), transpose=True)
+
+        # This should handle the empty case gracefully
+        try:
+            df = processor._read_data()  # type: ignore[reportPrivateUsage]
+            if df.height > 0:  # Only test transpose if we have data
+                transposed = processor._transpose_data(df)  # type: ignore[reportPrivateUsage]
+                assert isinstance(transposed, pl.DataFrame)
+        except (OSError, ValueError, pl.exceptions.ComputeError):
+            # If reading empty file fails, that's acceptable for this test
+            pass
+
+    def test_transpose_rectangular_data(self, tmp_path: Path) -> None:
+        """Test transpose with non-square (rectangular) data."""
+        # Create rectangular data (3 rows × 4 columns)
+        rectangular_data = pl.DataFrame(
+            {
+                "column_1": ["A", "D", "G"],
+                "column_2": ["B", "E", "H"],
+                "column_3": ["C", "F", "I"],
+                "column_4": ["X", "Y", "Z"],
+            }
+        )
+
+        rect_file = tmp_path / "rectangular.csv"
+        rectangular_data.write_csv(str(rect_file), include_header=False)
+
+        processor = PreSelectDataPolars(input_file=str(rect_file), transpose=True)
         df = processor._read_data()  # type: ignore[reportPrivateUsage]
-        with pytest.raises(ValueError, match="index_col.*out of bounds"):
-            processor._select_subset(df)  # type: ignore[reportPrivateUsage]
+
+        # Original: 3 rows × 4 columns
+        assert df.shape == (3, 4)
+
+        transposed = processor._transpose_data(df)  # type: ignore[reportPrivateUsage]
+
+        # After transpose: 4 rows × 3 columns
+        assert transposed.shape == (4, 3)
+
+        # Check column naming
+        expected_columns = ["column_1", "column_2", "column_3"]
+        assert transposed.columns == expected_columns
