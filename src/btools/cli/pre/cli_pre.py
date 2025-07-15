@@ -29,16 +29,18 @@ def pre_group():
     "--col-start",
     "-c",
     default="1",
-    help="Column from which to start outputting data (zero-based, default: 1). "
-    "Supports ranges like '1,50' to output columns 1-50 inclusive",
+    help="Column selection (zero-based, default: 1). "
+    "Supports single columns (e.g., '1'), ranges (e.g., '1:5' for columns 1-5), "
+    "and multiple ranges (e.g., '1:3,5:8' for columns 1-3 and 5-8)",
 )
 @click.option("--row-index", "--ri", default=0, help="Row to use as column header (zero-based, default: 0)")
 @click.option(
     "--row-start",
     "--rs",
     default="1",
-    help="Row from which to start outputting data (zero-based, default: 1). "
-    "Supports ranges like '1,100' to output rows 1-100 inclusive",
+    help="Row selection (zero-based, default: 1). "
+    "Supports single rows (e.g., '1'), ranges (e.g., '1:5' for rows 1-5), "
+    "and multiple ranges (e.g., '1:3,5:8' for rows 1-3 and 5-8)",
 )
 @click.option("--sep", "-s", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
 @click.option("--sheet", help="Sheet name or number to read from Excel files (default: first sheet)")
@@ -83,11 +85,14 @@ def select_data(
     # Select data starting from column 2, using row 1 as headers
     btools pre select_data input.xlsx --col-start 2 --row-index 1
 
-    # Select columns 1-50 and rows 1-100 (range support)
-    btools pre select_data input.xlsx --col-start "1,50" --row-start "1,100"
+    # Select columns 1-5 and rows 1-10 (range support)
+    btools pre select_data input.xlsx --col-start "1:5" --row-start "1:10"
 
     # Select first 25 rows starting from column 3
-    btools pre select_data input.csv --col-start 3 --row-start "1,25"
+    btools pre select_data input.csv --col-start 3 --row-start "1:25"
+
+    # Select multiple column ranges (1-3 and 5-8) and row ranges (1-10 and 20-30)
+    btools pre select_data input.xlsx --col-start "1:3,5:8" --row-start "1:10,20:30"
 
     # Use multiple columns (1,2,4) for index, separated by '#'
     btools pre select_data input.csv --index-col "1,2,4" --index-separator "#"

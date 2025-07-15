@@ -85,11 +85,13 @@ class PreSelectDataPolars:
             output_file: Path to the output CSV file (defaults to input_file with "_subset.csv" suffix)
             index_col: Column(s) to use as row index. Can be a single integer (e.g., 0) or
                       comma-separated string of integers (e.g., "1,2,4") for concatenated index (default: 0)
-            col_start: Column from which to start outputting data. Can be single integer (e.g., 1) or
-                      range string (e.g., "1,50") to output columns 1-50 (default: 1)
+            col_start: Column from which to start outputting data. Can be single integer (e.g., 1),
+                      single range string (e.g., "1:50") to output columns 1-50, or multiple ranges
+                      (e.g., "1:4,8:10,12:24") to select and concatenate multiple column ranges (default: 1)
             row_index: Row to use as column header (default: 0)
-            row_start: Row from which to start outputting data. Can be single integer (e.g., 1) or
-                      range string (e.g., "1,100") to output rows 1-100 (default: 1)
+            row_start: Row from which to start outputting data. Can be single integer (e.g., 1),
+                      single range string (e.g., "1:100") to output rows 1-100, or multiple ranges
+                      (e.g., "1:10,20:30") to select and concatenate multiple row ranges (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
             sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
@@ -120,50 +122,78 @@ class PreSelectDataPolars:
                     f"Invalid index_col format '{self.index_col}'. Use comma-separated integers like '1,2,4'"
                 ) from e
 
-    def _parse_range_parameter(self, param: int | str, param_name: str) -> tuple[int, int | None]:
-        """Parse a range parameter that can be either an int or a range string.
+    def _parse_multi_range_parameter(self, param: int | str, param_name: str) -> list[tuple[int, int | None]]:
+        """Parse a multi-range parameter that can be an int, single range, or multiple ranges.
 
         Args:
-            param: Either an integer or a string in format "start,end"
+            param: Either an integer, single range "start:end", or multiple ranges "1:4,8:10,12:24"
             param_name: Name of the parameter for error messages
 
         Returns:
-            Tuple of (start, end) where end is None if only start is specified
+            List of (start, end) tuples where end is None if only start is specified
 
         Raises:
             ValueError: If the parameter format is invalid
         """
         if isinstance(param, int):
-            return (param, None)
+            return [(param, None)]
+
         # param is str due to type union
         try:
-            if "," in param:
-                parts = [p.strip() for p in param.split(",")]
-                if len(parts) != 2:
-                    raise ValueError(f"Invalid {param_name} range format '{param}'. Use 'start,end' format")
-                start, end = int(parts[0]), int(parts[1])
-                if start > end:
-                    raise ValueError(f"Invalid {param_name} range '{param}': start must be <= end")
-                # For polars, we return end + 1 to include the end in the slice
-                return (start, end + 1)
-            else:
-                return (int(param), None)
+            ranges: list[tuple[int, int | None]] = []
+            # Split by comma to get individual range specifications
+            range_specs = [spec.strip() for spec in param.split(",")]
+
+            for spec in range_specs:
+                if ":" in spec:
+                    # Range format "start:end"
+                    parts = [p.strip() for p in spec.split(":")]
+                    if len(parts) != 2:
+                        raise ValueError(f"Invalid {param_name} range format '{spec}'. Use 'start:end' format")
+                    start, end = int(parts[0]), int(parts[1])
+                    if start > end:
+                        raise ValueError(f"Invalid {param_name} range '{spec}': start must be <= end")
+                    # For polars, we return end + 1 to include the end in the slice
+                    ranges.append((start, end + 1))
+                else:
+                    # Single number - start from this position to end
+                    ranges.append((int(spec), None))
+
+            return ranges
         except ValueError as e:
             if "invalid literal" in str(e):
-                raise ValueError(f"Invalid {param_name} format '{param}'. Use integer or 'start,end' format") from e
+                raise ValueError(
+                    f"Invalid {param_name} format '{param}'. Use integer, 'start:end', or 'start1:end1,start2:end2' format"
+                ) from e
             raise
 
-    def _parse_col_start(self) -> tuple[int, int | None]:
-        """Parse col_start parameter into start and end positions."""
-        return self._parse_range_parameter(self.col_start, "col_start")
+    def _parse_col_start(self) -> list[tuple[int, int | None]]:
+        """Parse col_start parameter into list of start and end positions."""
+        return self._parse_multi_range_parameter(self.col_start, "col_start")
 
-    def _parse_row_start(self) -> tuple[int, int | None]:
-        """Parse row_start parameter into start and end positions."""
-        return self._parse_range_parameter(self.row_start, "row_start")
+    def _parse_row_start(self) -> list[tuple[int, int | None]]:
+        """Parse row_start parameter into list of start and end positions."""
+        return self._parse_multi_range_parameter(self.row_start, "row_start")
 
-    def _generate_range_suffix(self, num_rows: int, num_cols: int) -> str:
-        """Generate suffix for filename based on the number of rows and columns in subset."""
-        return f"_row{num_rows}_col{num_cols}"
+    def _generate_range_suffix(
+        self, num_rows: int, num_cols: int, has_multi_col_ranges: bool, has_multi_row_ranges: bool
+    ) -> str:
+        """Generate suffix for filename based on the number of rows and columns in subset.
+
+        Args:
+            num_rows: Number of rows in the result
+            num_cols: Number of columns in the result
+            has_multi_col_ranges: Whether multiple column ranges were used
+            has_multi_row_ranges: Whether multiple row ranges were used
+        """
+        if has_multi_col_ranges and has_multi_row_ranges:
+            return f"_row{num_rows}_col{num_cols}_msc_msr"
+        elif has_multi_col_ranges:
+            return f"_row{num_rows}_col{num_cols}_msc"
+        elif has_multi_row_ranges:
+            return f"_row{num_rows}_col{num_cols}_msr"
+        else:
+            return f"_row{num_rows}_col{num_cols}"
 
     def _generate_output_filename(self) -> Path:
         """Generate output filename based on input filename.
@@ -189,9 +219,11 @@ class PreSelectDataPolars:
             return base_name.with_suffix(".csv.gz")
         return base_name
 
-    def _update_output_filename_with_range(self, output_file: Path, num_rows: int, num_cols: int) -> Path:
+    def _update_output_filename_with_range(
+        self, output_file: Path, num_rows: int, num_cols: int, has_multi_col_ranges: bool, has_multi_row_ranges: bool
+    ) -> Path:
         """Update output filename to include range information."""
-        range_suffix = self._generate_range_suffix(num_rows, num_cols)
+        range_suffix = self._generate_range_suffix(num_rows, num_cols, has_multi_col_ranges, has_multi_row_ranges)
 
         # Handle .csv.gz files specially
         if output_file.suffixes == [".csv", ".gz"]:
@@ -288,11 +320,10 @@ class PreSelectDataPolars:
         """
         # Parse range parameters
         index_columns_list = self._parse_index_columns()
-        col_start, col_end = self._parse_col_start()
-        row_start, row_end = self._parse_row_start()
+        col_ranges = self._parse_col_start()
+        row_ranges = self._parse_row_start()
 
-        # Validate parameters
-        # Check all index columns are within bounds
+        # Validate index columns
         for col_idx in index_columns_list:
             if col_idx >= df.width:
                 raise ValueError(f"index_col ({col_idx}) is out of bounds. DataFrame has {df.width} columns.")
@@ -300,28 +331,36 @@ class PreSelectDataPolars:
         if self.row_index >= df.height:
             raise ValueError(f"row_index ({self.row_index}) is out of bounds. DataFrame has {df.height} rows.")
 
-        if col_start >= df.width:
-            raise ValueError(f"col_start ({col_start}) is out of bounds. DataFrame has {df.width} columns.")
+        # Validate column ranges
+        for col_start, col_end in col_ranges:
+            if col_start >= df.width:
+                raise ValueError(f"col_start ({col_start}) is out of bounds. DataFrame has {df.width} columns.")
+            if col_end is not None and col_end > df.width:
+                raise ValueError(f"col_end ({col_end}) is out of bounds. DataFrame has {df.width} columns.")
 
-        if row_start >= df.height:
-            raise ValueError(f"row_start ({row_start}) is out of bounds. DataFrame has {df.height} rows.")
-
-        # Validate ranges
-        if col_end is not None and col_end >= df.width:
-            raise ValueError(f"col_end ({col_end}) is out of bounds. DataFrame has {df.width} columns.")
-
-        if row_end is not None and row_end >= df.height:
-            raise ValueError(f"row_end ({row_end}) is out of bounds. DataFrame has {df.height} rows.")
-
-        # Calculate actual end positions
-        actual_col_end = col_end if col_end is not None else df.width
-        actual_row_end = row_end if row_end is not None else df.height
+        # Validate row ranges
+        for row_start, row_end in row_ranges:
+            if row_start >= df.height:
+                raise ValueError(f"row_start ({row_start}) is out of bounds. DataFrame has {df.height} rows.")
+            if row_end is not None and row_end > df.height:
+                raise ValueError(f"row_end ({row_end}) is out of bounds. DataFrame has {df.height} rows.")
 
         # Extract column headers from the specified row
         header_row = df.slice(self.row_index, 1)
-        # Polars uses column_1, column_2, etc. when has_header=False (1-indexed)
-        header_cols = [pl.col(f"column_{i + 1}") for i in range(col_start, actual_col_end)]
-        column_headers = [str(val) for val in header_row.select(header_cols).row(0)]
+
+        # Process multiple column ranges
+        selected_columns: list[str] = []
+        column_headers: list[str] = []
+
+        for col_start, col_end in col_ranges:
+            actual_col_end = col_end if col_end is not None else df.width
+
+            # Collect column indices for this range
+            for col_idx in range(col_start, actual_col_end):
+                selected_columns.append(f"column_{col_idx + 1}")
+                # Get header name for this column
+                header_name = str(header_row.select(pl.col(f"column_{col_idx + 1}")).item())
+                column_headers.append(header_name)
 
         # Extract index name(s) - concatenate if multiple columns
         if len(index_columns_list) == 1:
@@ -330,31 +369,44 @@ class PreSelectDataPolars:
             index_parts = [str(header_row.select(pl.col(f"column_{col + 1}")).item()) for col in index_columns_list]
             index_name = self.index_separator.join(index_parts)
 
-        # Extract the data subset and row indices (with range support)
-        data_length = actual_row_end - row_start
-        data_rows = df.slice(row_start, data_length)
+        # Process multiple row ranges and concatenate them
+        all_data_rows: list[pl.DataFrame] = []
+        all_row_indices: list[str] = []
 
-        # Extract row indices from the specified column(s) - concatenate if multiple columns
-        if len(index_columns_list) == 1:
-            index_col_name = f"column_{index_columns_list[0] + 1}"
-            row_indices = [str(val) for val in data_rows.select(pl.col(index_col_name)).to_series().to_list()]
-        else:
-            # Create concatenated index from multiple columns
-            index_cols = [f"column_{col + 1}" for col in index_columns_list]
-            row_indices: list[str] = []
-            for row in data_rows.select(index_cols).iter_rows():
-                row_indices.append(self.index_separator.join(str(val) for val in row))
+        for row_start, row_end in row_ranges:
+            actual_row_end = row_end if row_end is not None else df.height
+            data_length = actual_row_end - row_start
+            data_rows = df.slice(row_start, data_length)
 
-        # Extract the data subset (columns from col_start to col_end)
-        data_columns = [f"column_{i + 1}" for i in range(col_start, actual_col_end)]
-        data_subset = data_rows.select(data_columns)
+            # Extract row indices from the specified column(s)
+            if len(index_columns_list) == 1:
+                index_col_name = f"column_{index_columns_list[0] + 1}"
+                row_indices = [str(val) for val in data_rows.select(pl.col(index_col_name)).to_series().to_list()]
+            else:
+                # Create concatenated index from multiple columns
+                index_cols = [f"column_{col + 1}" for col in index_columns_list]
+                row_indices: list[str] = []
+                for row in data_rows.select(index_cols).iter_rows():
+                    row_indices.append(self.index_separator.join(str(val) for val in row))
+
+            # Select the columns for this row range
+            data_subset = data_rows.select(selected_columns)
+
+            all_data_rows.append(data_subset)
+            all_row_indices.extend(row_indices)
+
+        # Concatenate all row ranges
+        final_data: pl.DataFrame = all_data_rows[0] if len(all_data_rows) == 1 else pl.concat(all_data_rows, how="vertical")
 
         # Rename columns to use the headers we extracted
-        column_mapping = {old_name: new_name for old_name, new_name in zip(data_subset.columns, column_headers, strict=True)}
-        data_subset = data_subset.rename(column_mapping)
+        if len(selected_columns) == len(column_headers):
+            column_mapping: dict[str, str] = {
+                old_name: new_name for old_name, new_name in zip(selected_columns, column_headers, strict=True)
+            }
+            final_data = final_data.rename(column_mapping)
 
-        # Add the index as a column (Polars doesn't have a traditional row index like pandas)
-        result_df = data_subset.with_columns(pl.Series(name=index_name, values=row_indices))
+        # Add the index as a column
+        result_df: pl.DataFrame = final_data.with_columns(pl.Series(name=index_name, values=all_row_indices))
 
         # Move the index column to the front
         cols = [index_name] + [col for col in result_df.columns if col != index_name]
@@ -385,10 +437,21 @@ class PreSelectDataPolars:
         # Update output filename to include range information
         # Subtract 1 from columns because the index column is included
         actual_data_cols = shape_b - 1
-        _, col_end = self._parse_col_start()
-        _, row_end = self._parse_row_start()
-        if (col_end is not None) or (row_end is not None):
-            updated_output_file = self._update_output_filename_with_range(self.output_file, shape_a, actual_data_cols)
+        col_ranges = self._parse_col_start()
+        row_ranges = self._parse_row_start()
+
+        has_multi_col_ranges = len(col_ranges) > 1
+        has_multi_row_ranges = len(row_ranges) > 1
+
+        # Check if any ranges are specified (not just single start positions)
+        has_range_specified = any(col_end is not None for _, col_end in col_ranges) or any(
+            row_end is not None for _, row_end in row_ranges
+        )
+
+        if has_range_specified or has_multi_col_ranges or has_multi_row_ranges:
+            updated_output_file = self._update_output_filename_with_range(
+                self.output_file, shape_a, actual_data_cols, has_multi_col_ranges, has_multi_row_ranges
+            )
         else:
             updated_output_file = self.output_file
 

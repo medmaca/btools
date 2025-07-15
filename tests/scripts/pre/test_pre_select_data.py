@@ -73,9 +73,9 @@ class TestPreSelectDataPolars:
             input_file=str(csv_file),
             output_file=output_file,
             index_col="0,1",
-            col_start="2,4",
+            col_start="2:4",
             row_index=0,
-            row_start="1,3",
+            row_start="1:3",
             sep=",",
             sheet="Sheet1",
             index_separator="|",
@@ -83,8 +83,8 @@ class TestPreSelectDataPolars:
 
         assert str(processor.output_file) == output_file
         assert processor.index_col == "0,1"
-        assert processor.col_start == "2,4"
-        assert processor.row_start == "1,3"
+        assert processor.col_start == "2:4"
+        assert processor.row_start == "1:3"
         assert processor.sep == ","
         assert processor.sheet == "Sheet1"
         assert processor.index_separator == "|"
@@ -101,17 +101,23 @@ class TestPreSelectDataPolars:
         result = processor._parse_index_columns()  # type: ignore[reportPrivateUsage]
         assert result == [0, 2, 4]
 
-    def test_parse_range_parameter_single_int(self, csv_file: Path) -> None:
-        """Test parsing range parameter with single integer."""
+    def test_parse_multi_range_parameter_single_int(self, csv_file: Path) -> None:
+        """Test parsing multi-range parameter with single integer."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        result = processor._parse_range_parameter(5, "test_param")  # type: ignore[reportPrivateUsage]
-        assert result == (5, None)
+        result = processor._parse_multi_range_parameter(5, "test_param")  # type: ignore[reportPrivateUsage]
+        assert result == [(5, None)]
 
-    def test_parse_range_parameter_range_string(self, csv_file: Path) -> None:
-        """Test parsing range parameter with range string."""
+    def test_parse_multi_range_parameter_single_range(self, csv_file: Path) -> None:
+        """Test parsing multi-range parameter with single range string."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        result = processor._parse_range_parameter("2,5", "test_param")  # type: ignore[reportPrivateUsage]
-        assert result == (2, 6)  # end is inclusive, so 5+1=6
+        result = processor._parse_multi_range_parameter("2:5", "test_param")  # type: ignore[reportPrivateUsage]
+        assert result == [(2, 6)]  # end is exclusive, so 5+1=6
+
+    def test_parse_multi_range_parameter_multiple_ranges(self, csv_file: Path) -> None:
+        """Test parsing multi-range parameter with multiple ranges."""
+        processor = PreSelectDataPolars(input_file=str(csv_file))
+        result = processor._parse_multi_range_parameter("1:3,5:7", "test_param")  # type: ignore[reportPrivateUsage]
+        assert result == [(1, 4), (5, 8)]  # Both ranges converted to exclusive end
 
     def test_read_csv_file(self, csv_file: Path) -> None:
         """Test reading CSV file."""
@@ -146,9 +152,9 @@ class TestPreSelectDataPolars:
         processor = PreSelectDataPolars(
             input_file=str(csv_file),
             index_col=0,
-            col_start="1,3",  # columns 1-3
+            col_start="1:3",  # columns 1-3
             row_index=0,
-            row_start="1,2",  # rows 1-2
+            row_start="1:2",  # rows 1-2
         )
         df = processor._read_data()  # type: ignore[reportPrivateUsage]
         subset = processor._select_subset(df)  # type: ignore[reportPrivateUsage]
@@ -231,7 +237,7 @@ class TestEdgeCasesAndErrorHandling:
         processor = PreSelectDataPolars(input_file=str(csv_file))
 
         with pytest.raises(ValueError, match="Invalid.*range"):
-            processor._parse_range_parameter("5,3", "test_param")  # type: ignore[reportPrivateUsage]  # start > end
+            processor._parse_multi_range_parameter("5:3", "test_param")  # type: ignore[reportPrivateUsage]  # start > end
 
     def test_out_of_bounds_parameters(self, tmp_path: Path) -> None:
         """Test error handling for out-of-bounds parameters."""
