@@ -358,7 +358,7 @@ class PreSelectDataPolars:
             if row_end is not None and row_end > df.height:
                 raise ValueError(f"row_end ({row_end}) is out of bounds. DataFrame has {df.height} rows.")
 
-        # Extract column headers from the specified row
+        # Extract column headers from the specified row (optimized for large datasets)
         header_row = df.slice(self.row_index, 1)
 
         # Process multiple column ranges
@@ -369,18 +369,21 @@ class PreSelectDataPolars:
             actual_col_end = col_end if col_end is not None else df.width
 
             # Collect column indices for this range
-            for col_idx in range(col_start, actual_col_end):
-                selected_columns.append(f"column_{col_idx + 1}")
-                # Get header name for this column
-                header_name = str(header_row.select(pl.col(f"column_{col_idx + 1}")).item())
-                column_headers.append(header_name)
+            range_columns = [f"column_{col_idx + 1}" for col_idx in range(col_start, actual_col_end)]
+            selected_columns.extend(range_columns)
 
-        # Extract index name(s) - concatenate if multiple columns
+            # Extract all headers for this range in one operation (much faster)
+            if range_columns:
+                header_values = header_row.select(range_columns).row(0)
+                column_headers.extend(str(val) for val in header_values)
+
+        # Extract index name(s) - concatenate if multiple columns (optimized)
         if len(index_columns_list) == 1:
             index_name = str(header_row.select(pl.col(f"column_{index_columns_list[0] + 1}")).item())
         else:
-            index_parts = [str(header_row.select(pl.col(f"column_{col + 1}")).item()) for col in index_columns_list]
-            index_name = self.index_separator.join(index_parts)
+            index_cols = [f"column_{col + 1}" for col in index_columns_list]
+            index_values = header_row.select(index_cols).row(0)
+            index_name = self.index_separator.join(str(val) for val in index_values)
 
         # Process multiple row ranges and concatenate them
         all_data_rows: list[pl.DataFrame] = []
@@ -391,16 +394,17 @@ class PreSelectDataPolars:
             data_length = actual_row_end - row_start
             data_rows = df.slice(row_start, data_length)
 
-            # Extract row indices from the specified column(s)
+            # Extract row indices from the specified column(s) - optimized for large datasets
             if len(index_columns_list) == 1:
                 index_col_name = f"column_{index_columns_list[0] + 1}"
-                row_indices = [str(val) for val in data_rows.select(pl.col(index_col_name)).to_series().to_list()]
+                # Use vectorized operation instead of converting to list
+                row_indices = [str(val) for val in data_rows.select(pl.col(index_col_name)).to_series()]
             else:
-                # Create concatenated index from multiple columns
+                # Create concatenated index from multiple columns - vectorized approach
                 index_cols = [f"column_{col + 1}" for col in index_columns_list]
-                row_indices: list[str] = []
-                for row in data_rows.select(index_cols).iter_rows():
-                    row_indices.append(self.index_separator.join(str(val) for val in row))
+                # Get all rows at once instead of iterating
+                index_data = data_rows.select(index_cols)
+                row_indices = [self.index_separator.join(str(val) for val in row_tuple) for row_tuple in index_data.rows()]
 
             # Select the columns for this row range
             data_subset = data_rows.select(selected_columns)
@@ -445,13 +449,22 @@ class PreSelectDataPolars:
             Transposed Polars DataFrame with generic column names
         """
         try:
+            print(f"  Starting transpose of shape {df.shape}...")
+
             # Use Polars' transpose method with include_header=False to avoid duplicate column name issues
             # This ensures we get generic column names instead of using potentially duplicate data values
             transposed_df = df.transpose(include_header=False)
 
+            print(f"  Transpose completed. New shape: {transposed_df.shape}")
+
             # Rename columns to follow the generic naming convention (column_1, column_2, etc.)
             # This ensures consistency with the rest of the code that expects 1-based indexing
-            column_mapping = {old_name: f"column_{i + 1}" for i, old_name in enumerate(transposed_df.columns)}
+            # Use lazy evaluation for better performance with large datasets
+            num_cols = transposed_df.width
+            if num_cols > 1000:
+                print(f"  Renaming {num_cols} columns (this may take a moment for large datasets)...")
+
+            column_mapping = {f"column_{i}": f"column_{i + 1}" for i in range(num_cols)}
             transposed_df = transposed_df.rename(column_mapping)
 
             return transposed_df
@@ -482,6 +495,10 @@ class PreSelectDataPolars:
         print(f"  - Row start: {self.row_start}")
         if self.transpose:
             print("  - Data was transposed before selection")
+
+        # Add progress indication for large datasets
+        if df.shape[0] > 10000 or df.shape[1] > 1000:
+            print("Processing large dataset - this may take a moment...")
 
         selected_df, original_headers = self._select_subset(df)
         shape_a, shape_b = selected_df.shape
