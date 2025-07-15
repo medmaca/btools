@@ -99,7 +99,6 @@ class PreSelectDataPolars:
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
         """
         self.input_file = Path(input_file)
-        self.output_file = Path(output_file) if output_file else self._generate_output_filename()
         self.index_col = index_col
         self.col_start = col_start
         self.row_index = row_index
@@ -108,6 +107,7 @@ class PreSelectDataPolars:
         self.sheet = sheet
         self.transpose = transpose
         self.index_separator = index_separator
+        self.output_file = Path(output_file) if output_file else self._generate_output_filename()
 
     def _parse_index_columns(self) -> list[int]:
         """Parse index_col parameter into a list of integers.
@@ -217,7 +217,9 @@ class PreSelectDataPolars:
             # For non-gzipped files, just remove the extension
             base_stem = self.input_file.stem
 
-        base_name = self.input_file.with_name(base_stem + "_subset").with_suffix(".csv")
+        # Add transpose suffix if transpose is enabled
+        transpose_suffix = "_t" if self.transpose else ""
+        base_name = self.input_file.with_name(base_stem + "_subset" + transpose_suffix).with_suffix(".csv")
         if _should_write_gzipped():
             return base_name.with_suffix(".csv.gz")
         return base_name
@@ -570,6 +572,7 @@ class PreSelectDataPolars:
         """
         unique_headers: list[str] = []
         seen_names: dict[str, int] = {}
+        duplicate_names: set[str] = set()
 
         for header in column_headers:
             if header not in seen_names:
@@ -577,7 +580,25 @@ class PreSelectDataPolars:
                 unique_headers.append(header)
             else:
                 seen_names[header] += 1
+                duplicate_names.add(header)
                 unique_headers.append(f"{header}_{seen_names[header]}")
+
+        # Show warning if duplicates were found
+        if duplicate_names:
+            import time
+
+            num_duplicate_columns = len(duplicate_names)
+            duplicate_list = sorted(duplicate_names)
+
+            print()
+            print("⚠️  WARNING: Duplicate column names detected!")
+            print(f"   Found {num_duplicate_columns} column name(s) with duplicates: {', '.join(duplicate_list)}")
+            print("   These have been made unique by adding suffixes (e.g., 'CD99_1', 'CD99_2').")
+            print("   This may affect data interpretation - please verify the results.")
+            print()
+
+            # Brief pause to ensure user sees the warning
+            time.sleep(2)
 
         return unique_headers
 
