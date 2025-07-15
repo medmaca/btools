@@ -322,14 +322,14 @@ class PreSelectDataPolars:
         except Exception as e:
             raise OSError(f"Error reading file {self.input_file}: {str(e)}") from e
 
-    def _select_subset(self, df: pl.DataFrame) -> pl.DataFrame:
+    def _select_subset(self, df: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
         """Select the specified subset of data from the DataFrame using Polars operations.
 
         Args:
             df: Input Polars DataFrame
 
         Returns:
-            Polars DataFrame containing the selected subset
+            Tuple of (Polars DataFrame with generic column names, list of original headers)
         """
         # Parse range parameters
         index_columns_list = self._parse_index_columns()
@@ -411,23 +411,25 @@ class PreSelectDataPolars:
         # Concatenate all row ranges
         final_data: pl.DataFrame = all_data_rows[0] if len(all_data_rows) == 1 else pl.concat(all_data_rows, how="vertical")
 
-        # Rename columns to use the headers we extracted, making sure column names are unique
-        if len(selected_columns) == len(column_headers):
-            # Make column headers unique by adding suffixes to duplicates
-            unique_headers = self._make_column_names_unique(column_headers)
-            column_mapping: dict[str, str] = {
-                old_name: new_name for old_name, new_name in zip(selected_columns, unique_headers, strict=True)
-            }
-            final_data = final_data.rename(column_mapping)
+        # Keep generic column names for the DataFrame, but track original headers separately
+        # This avoids Polars transpose issues with duplicate column names
+        generic_column_names = [f"col_{i + 1}" for i in range(len(selected_columns))]
+        column_mapping: dict[str, str] = {
+            old_name: new_name for old_name, new_name in zip(selected_columns, generic_column_names, strict=True)
+        }
+        final_data = final_data.rename(column_mapping)
 
-        # Add the index as a column
-        result_df: pl.DataFrame = final_data.with_columns(pl.Series(name=index_name, values=all_row_indices))
+        # Add the index as a column with generic name
+        result_df: pl.DataFrame = final_data.with_columns(pl.Series(name="index_col", values=all_row_indices))
 
         # Move the index column to the front
-        cols = [index_name] + [col for col in result_df.columns if col != index_name]
+        cols = ["index_col"] + [col for col in result_df.columns if col != "index_col"]
         result_df = result_df.select(cols)
 
-        return result_df
+        # Prepare the original headers list (index name + column headers)
+        original_headers = [index_name] + column_headers
+
+        return result_df, original_headers
 
     def _transpose_data(self, df: pl.DataFrame) -> pl.DataFrame:
         """Transpose the DataFrame using Polars' built-in transpose method.
@@ -481,7 +483,7 @@ class PreSelectDataPolars:
         if self.transpose:
             print("  - Data was transposed before selection")
 
-        selected_df = self._select_subset(df)
+        selected_df, original_headers = self._select_subset(df)
         shape_a, shape_b = selected_df.shape
 
         # Update output filename to include range information
@@ -509,38 +511,44 @@ class PreSelectDataPolars:
         print(f"Saving to: {updated_output_file}")
 
         # Save to CSV file using Polars (with gzip support)
-        self._write_csv_file(selected_df, updated_output_file)
+        self._write_csv_file(selected_df, updated_output_file, original_headers)
 
         print("Processing completed successfully!")
 
-    def _write_csv_file(self, df: pl.DataFrame, output_file: Path) -> None:
+    def _write_csv_file(self, df: pl.DataFrame, output_file: Path, original_headers: list[str]) -> None:
         """Write DataFrame to CSV file, with optional gzip compression.
 
+        Writes the file with include_header=False and prepends the original headers
+        to preserve duplicate column names without Polars modification.
+
         Args:
-            df: DataFrame to write
+            df: DataFrame to write (with generic column names)
             output_file: Path where to write the file
+            original_headers: List of original column headers to write as first row
         """
+        import io
+
+        # Create CSV content with original headers
+        csv_buffer = io.StringIO()
+
+        # Write original headers as first line
+        csv_buffer.write(",".join(original_headers) + "\n")
+
+        # Write data without headers to buffer
+        df.write_csv(csv_buffer, include_header=False)
+
+        # Get the complete CSV content
+        csv_content = csv_buffer.getvalue()
+        csv_buffer.close()
+
         if output_file.suffix.lower() == ".gz":
-            # For gzip files, we need to write to a temporary file first, then compress
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
-
-            try:
-                # Write to temporary file
-                df.write_csv(str(temp_path))
-
-                # Compress to final destination
-                with open(temp_path, "rb") as f_in, gzip.open(output_file, "wb") as f_out:
-                    f_out.write(f_in.read())
-            finally:
-                # Clean up temporary file
-                if temp_path.exists():
-                    temp_path.unlink()
+            # For gzip files, compress the content
+            with gzip.open(output_file, "wt", encoding="utf-8") as f_out:
+                f_out.write(csv_content)
         else:
             # Regular CSV file
-            df.write_csv(str(output_file))
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(csv_content)
 
     def get_info(self) -> dict[str, str | int | None | bool]:
         """Get information about the data selection parameters.
@@ -560,47 +568,6 @@ class PreSelectDataPolars:
             "transpose": self.transpose,
             "index_separator": self.index_separator,
         }
-
-    def _make_column_names_unique(self, column_headers: list[str]) -> list[str]:
-        """Make column names unique by adding suffixes to duplicates.
-
-        Args:
-            column_headers: List of column header names that may contain duplicates
-
-        Returns:
-            List of unique column names with suffixes added to duplicates
-        """
-        unique_headers: list[str] = []
-        seen_names: dict[str, int] = {}
-        duplicate_names: set[str] = set()
-
-        for header in column_headers:
-            if header not in seen_names:
-                seen_names[header] = 0
-                unique_headers.append(header)
-            else:
-                seen_names[header] += 1
-                duplicate_names.add(header)
-                unique_headers.append(f"{header}_{seen_names[header]}")
-
-        # Show warning if duplicates were found
-        if duplicate_names:
-            import time
-
-            num_duplicate_columns = len(duplicate_names)
-            duplicate_list = sorted(duplicate_names)
-
-            print()
-            print("⚠️  WARNING: Duplicate column names detected!")
-            print(f"   Found {num_duplicate_columns} column name(s) with duplicates: {', '.join(duplicate_list)}")
-            print("   These have been made unique by adding suffixes (e.g., 'CD99_1', 'CD99_2').")
-            print("   This may affect data interpretation - please verify the results.")
-            print()
-
-            # Brief pause to ensure user sees the warning
-            time.sleep(2)
-
-        return unique_headers
 
 
 def main():

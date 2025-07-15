@@ -4,6 +4,7 @@ This module contains comprehensive tests for the PreSelectDataPolars class,
 covering functionality for data subset selection, file I/O, parameter parsing,
 and error handling scenarios.
 """
+# pyright: reportPrivateUsage=false
 
 import gzip
 from pathlib import Path
@@ -92,37 +93,37 @@ class TestPreSelectDataPolars:
     def test_parse_index_columns_single(self, csv_file: Path) -> None:
         """Test parsing single index column."""
         processor = PreSelectDataPolars(input_file=str(csv_file), index_col=2)
-        result = processor._parse_index_columns()  # type: ignore[reportPrivateUsage]
+        result = processor._parse_index_columns()  # type: ignore
         assert result == [2]
 
     def test_parse_index_columns_multiple(self, csv_file: Path) -> None:
         """Test parsing multiple index columns."""
         processor = PreSelectDataPolars(input_file=str(csv_file), index_col="0,2,4")
-        result = processor._parse_index_columns()  # type: ignore[reportPrivateUsage]
+        result = processor._parse_index_columns()  # type: ignore
         assert result == [0, 2, 4]
 
     def test_parse_multi_range_parameter_single_int(self, csv_file: Path) -> None:
         """Test parsing multi-range parameter with single integer."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        result = processor._parse_multi_range_parameter(5, "test_param")  # type: ignore[reportPrivateUsage]
+        result = processor._parse_multi_range_parameter(5, "test_param")  # type: ignore
         assert result == [(5, None)]
 
     def test_parse_multi_range_parameter_single_range(self, csv_file: Path) -> None:
         """Test parsing multi-range parameter with single range string."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        result = processor._parse_multi_range_parameter("2:5", "test_param")  # type: ignore[reportPrivateUsage]
+        result = processor._parse_multi_range_parameter("2:5", "test_param")  # type: ignore
         assert result == [(2, 6)]  # end is exclusive, so 5+1=6
 
     def test_parse_multi_range_parameter_multiple_ranges(self, csv_file: Path) -> None:
         """Test parsing multi-range parameter with multiple ranges."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        result = processor._parse_multi_range_parameter("1:3,5:7", "test_param")  # type: ignore[reportPrivateUsage]
+        result = processor._parse_multi_range_parameter("1:3,5:7", "test_param")  # type: ignore
         assert result == [(1, 4), (5, 8)]  # Both ranges converted to exclusive end
 
     def test_read_csv_file(self, csv_file: Path) -> None:
         """Test reading CSV file."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
 
         assert isinstance(df, pl.DataFrame)
         assert df.shape == (5, 5)  # 5 rows, 5 columns as per sample_data
@@ -130,7 +131,7 @@ class TestPreSelectDataPolars:
     def test_read_gzipped_csv_file(self, gzipped_csv_file: Path) -> None:
         """Test reading gzipped CSV file."""
         processor = PreSelectDataPolars(input_file=str(gzipped_csv_file))
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
 
         assert isinstance(df, pl.DataFrame)
         assert df.shape == (5, 5)  # 5 rows, 5 columns as per sample_data
@@ -138,14 +139,14 @@ class TestPreSelectDataPolars:
     def test_select_subset_basic(self, csv_file: Path) -> None:
         """Test basic subset selection."""
         processor = PreSelectDataPolars(input_file=str(csv_file), index_col=0, col_start=1, row_index=0, row_start=1)
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
-        subset = processor._select_subset(df)  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
+        subset, original_headers = processor._select_subset(df)  # type: ignore
 
         # Should have 4 rows (excluding header) and 5 columns (index + 4 data columns)
         assert subset.shape == (4, 5)  # 4 data rows after excluding header row
 
-        # Check that the index column is first
-        assert subset.columns[0] == "ID"
+        # Check that the original headers are preserved
+        assert original_headers[0] == "ID"
 
     def test_select_subset_with_ranges(self, csv_file: Path) -> None:
         """Test subset selection with column and row ranges."""
@@ -156,8 +157,8 @@ class TestPreSelectDataPolars:
             row_index=0,
             row_start="1:2",  # rows 1-2
         )
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
-        subset = processor._select_subset(df)  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
+        subset, _original_headers = processor._select_subset(df)  # type: ignore
 
         # Should have 2 rows and 4 columns (index + 3 data columns)
         assert subset.shape == (2, 4)
@@ -172,11 +173,11 @@ class TestPreSelectDataPolars:
             row_start=1,
             index_separator="|",
         )
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
-        subset = processor._select_subset(df)  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
+        subset, _original_headers = processor._select_subset(df)  # type: ignore
 
         # Check that index values are concatenated with separator
-        index_values = subset.select(pl.col(subset.columns[0])).to_series().to_list()
+        index_values = subset.select(pl.col("index_col")).to_series().to_list()
         assert "|" in index_values[0]  # Should contain separator
 
     def test_process_end_to_end(self, csv_file: Path, tmp_path: Path) -> None:
@@ -210,13 +211,13 @@ class TestPreSelectDataPolars:
     def test_transpose_data_functionality(self, csv_file: Path) -> None:
         """Test the transpose functionality."""
         processor = PreSelectDataPolars(input_file=str(csv_file))
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
 
         # Original shape: 5 rows × 5 columns
         assert df.shape == (5, 5)
 
         # Test transpose
-        transposed_df = processor._transpose_data(df)  # type: ignore[reportPrivateUsage]
+        transposed_df = processor._transpose_data(df)  # type: ignore
 
         # After transpose: 5 columns × 5 rows (dimensions swapped)
         assert transposed_df.shape == (5, 5)
@@ -293,9 +294,9 @@ class TestPreSelectDataPolars:
 
         # This should handle the empty case gracefully
         try:
-            df = processor._read_data()  # type: ignore[reportPrivateUsage]
+            df = processor._read_data()  # type: ignore
             if df.height > 0:  # Only test transpose if we have data
-                transposed = processor._transpose_data(df)  # type: ignore[reportPrivateUsage]
+                transposed = processor._transpose_data(df)  # type: ignore
                 assert isinstance(transposed, pl.DataFrame)
         except (OSError, ValueError, pl.exceptions.ComputeError):
             # If reading empty file fails, that's acceptable for this test
@@ -317,12 +318,12 @@ class TestPreSelectDataPolars:
         rectangular_data.write_csv(str(rect_file), include_header=False)
 
         processor = PreSelectDataPolars(input_file=str(rect_file), transpose=True)
-        df = processor._read_data()  # type: ignore[reportPrivateUsage]
+        df = processor._read_data()  # type: ignore
 
         # Original: 3 rows × 4 columns
         assert df.shape == (3, 4)
 
-        transposed = processor._transpose_data(df)  # type: ignore[reportPrivateUsage]
+        transposed = processor._transpose_data(df)  # type: ignore
 
         # After transpose: 4 rows × 3 columns
         assert transposed.shape == (4, 3)
