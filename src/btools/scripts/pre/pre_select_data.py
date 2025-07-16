@@ -75,7 +75,7 @@ class PreSelectDataPolars:
         row_index: int = 0,
         row_start: int | str = 1,
         sep: str | None = None,
-        sheet: str | None = None,
+        sheet: str | int | None = None,
         transpose: bool = False,
         index_separator: str = "#",
     ):
@@ -94,7 +94,7 @@ class PreSelectDataPolars:
                       single range string (e.g., "1:100") to output rows 1-100, or multiple ranges
                       (e.g., "1:10,20:30") to select and concatenate multiple row ranges (default: 1)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect based on file extension)
-            sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
+            sheet: Sheet name (string) or sheet index (integer) to read from Excel files (default: None, uses first sheet)
             transpose: Whether to transpose the data before applying row/column selections (default: False)
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
         """
@@ -198,6 +198,17 @@ class PreSelectDataPolars:
         else:
             return f"_row{num_rows}_col{num_cols}"
 
+    def _sanitize_sheet_name(self, sheet_name: str) -> str:
+        """Sanitize sheet name for use in filename by replacing spaces with hyphens.
+
+        Args:
+            sheet_name: Original sheet name
+
+        Returns:
+            Sanitized sheet name suitable for filename
+        """
+        return sheet_name.replace(" ", "-")
+
     def _generate_output_filename(self) -> Path:
         """Generate output filename based on input filename.
 
@@ -205,6 +216,7 @@ class PreSelectDataPolars:
         when we know the actual dimensions of the subset.
 
         If GZIP_OUT environment variable is True, adds .gz extension.
+        For Excel files, appends sheet information after "_sheet_".
         """
         # Get the true base name, removing any file extensions (.csv, .tsv, .gz, etc.)
         # For example: "file.tsv.gz" -> "file", "file.csv" -> "file"
@@ -217,9 +229,21 @@ class PreSelectDataPolars:
             # For non-gzipped files, just remove the extension
             base_stem = self.input_file.stem
 
+        # Add sheet suffix for Excel files
+        sheet_suffix = ""
+        true_extension = _get_true_file_extension(self.input_file)
+        if true_extension in [".xlsx", ".xls"]:
+            if self.sheet is not None:
+                # Use provided sheet name/number
+                sanitized_sheet = self._sanitize_sheet_name(str(self.sheet))
+                sheet_suffix = f"_sheet_{sanitized_sheet}"
+            else:
+                # Default to first sheet (index 0)
+                sheet_suffix = "_sheet_0"
+
         # Add transpose suffix if transpose is enabled
         transpose_suffix = "_t" if self.transpose else ""
-        base_name = self.input_file.with_name(base_stem + "_subset" + transpose_suffix).with_suffix(".csv")
+        base_name = self.input_file.with_name(base_stem + "_subset" + sheet_suffix + transpose_suffix).with_suffix(".csv")
         if _should_write_gzipped():
             return base_name.with_suffix(".csv.gz")
         return base_name
@@ -258,7 +282,7 @@ class PreSelectDataPolars:
         For Excel files, the sheet parameter controls which sheet to read:
         - If sheet is None: reads the first sheet (index 0)
         - If sheet is a string: reads the sheet with that name
-        - If sheet is convertible to int: reads the sheet at that index
+        - If sheet is an integer: reads the sheet at that index
 
         Returns:
             Polars DataFrame containing the input data
@@ -295,7 +319,11 @@ class PreSelectDataPolars:
                     # Use Polars read_excel function
                     if self.sheet is not None:
                         print(f"\tReading Excel file: {self.input_file}, sheet: {self.sheet}")
-                        df = pl.read_excel(self.input_file, sheet_name=self.sheet, has_header=False)
+                        # Handle both string and integer sheet references
+                        if isinstance(self.sheet, int):
+                            df = pl.read_excel(self.input_file, sheet_id=self.sheet, has_header=False)
+                        else:
+                            df = pl.read_excel(self.input_file, sheet_name=self.sheet, has_header=False)
                     else:
                         print(f"\tReading Excel file: {self.input_file}")
                         df = pl.read_excel(self.input_file, has_header=False)

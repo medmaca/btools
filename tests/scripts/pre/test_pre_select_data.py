@@ -331,3 +331,70 @@ class TestPreSelectDataPolars:
         # Check column naming
         expected_columns = ["column_1", "column_2", "column_3"]
         assert transposed.columns == expected_columns
+
+    def test_excel_sheet_name_in_filename_string_sheet(self, tmp_path: Path) -> None:
+        """Test that string sheet names are included in output filename for Excel files."""
+        # Create a mock Excel file path (doesn't need to exist for filename generation test)
+        excel_file = tmp_path / "test_data.xlsx"
+
+        processor = PreSelectDataPolars(
+            input_file=str(excel_file),
+            sheet="Data Sheet",  # Sheet name with space
+        )
+
+        output_filename = str(processor.output_file)
+        assert "_sheet_Data-Sheet" in output_filename
+        assert output_filename.endswith(".csv.gz")  # Should have .gz due to environment
+
+    def test_excel_sheet_name_in_filename_integer_sheet(self, tmp_path: Path) -> None:
+        """Test that integer sheet indices are included in output filename for Excel files."""
+        excel_file = tmp_path / "test_data.xlsx"
+
+        processor = PreSelectDataPolars(
+            input_file=str(excel_file),
+            sheet=2,  # Sheet index
+        )
+
+        output_filename = str(processor.output_file)
+        assert "_sheet_2" in output_filename
+
+    def test_excel_sheet_name_in_filename_default_sheet(self, tmp_path: Path) -> None:
+        """Test that default sheet (None) results in _sheet_0 in filename for Excel files."""
+        excel_file = tmp_path / "test_data.xlsx"
+
+        processor = PreSelectDataPolars(
+            input_file=str(excel_file),
+            sheet=None,  # Default sheet
+        )
+
+        output_filename = str(processor.output_file)
+        assert "_sheet_0" in output_filename
+
+    def test_non_excel_files_no_sheet_suffix(self, tmp_path: Path) -> None:
+        """Test that non-Excel files don't get sheet suffixes even when sheet is specified."""
+        csv_file = tmp_path / "test_data.csv"
+
+        processor = PreSelectDataPolars(
+            input_file=str(csv_file),
+            sheet="SomeSheet",  # This should be ignored for CSV files
+        )
+
+        output_filename = processor.output_file.name  # Just the filename, not the full path
+        assert "_sheet_" not in output_filename
+
+    def test_sanitize_sheet_name(self, tmp_path: Path) -> None:
+        """Test that sheet names are properly sanitized for filename use."""
+        excel_file = tmp_path / "test_data.xlsx"
+
+        processor = PreSelectDataPolars(
+            input_file=str(excel_file),
+            sheet="My Data Sheet",  # Multiple spaces
+        )
+
+        # Test the sanitize method directly
+        sanitized = processor._sanitize_sheet_name("My Data Sheet")  # type: ignore
+        assert sanitized == "My-Data-Sheet"
+
+        # Test in filename
+        output_filename = str(processor.output_file)
+        assert "_sheet_My-Data-Sheet" in output_filename
