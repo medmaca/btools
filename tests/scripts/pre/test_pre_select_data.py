@@ -416,3 +416,69 @@ class TestPreSelectDataPolars:
         # Test in filename
         output_filename = str(processor.output_file)
         assert "_sheet_My-Data-Sheet" in output_filename
+
+    def test_write_and_read_parquet(self, csv_file: Path, tmp_path: Path) -> None:
+        """Test writing to Parquet and reading back preserves header row as first row."""
+        parquet_file = tmp_path / "output.parquet"
+        processor = PreSelectDataPolars(
+            input_file=str(csv_file),
+            output_file=str(parquet_file),
+            index_col=0,
+            col_start=1,
+            row_index=0,
+            row_start=1,
+            parquet_out=True,
+        )
+        processor.process()
+        assert parquet_file.exists()
+
+        # Read back the Parquet file
+        df = pl.read_parquet(parquet_file)
+        # First row should be the original header
+        header_row = df.slice(0, 1)
+        # Remaining rows are data
+        data_rows = df.slice(1, df.height - 1)
+        # Check header values
+        expected_header = ["ID", "Name", "Age", "City", "Score"]
+        # The header row includes the index column as the first value
+        assert list(header_row.row(0)) == expected_header
+        # Check data shape
+        assert data_rows.shape[0] == 4
+        assert data_rows.shape[1] == 5
+
+    def test_parquet_to_csv_roundtrip(self, csv_file: Path, tmp_path: Path) -> None:
+        """Test Parquet to CSV roundtrip preserves header row and data shape."""
+        parquet_file = tmp_path / "output.parquet"
+        csv_out_file = tmp_path / "output_from_parquet.csv"
+        # Write Parquet
+        processor = PreSelectDataPolars(
+            input_file=str(csv_file),
+            output_file=str(parquet_file),
+            index_col=0,
+            col_start=1,
+            row_index=0,
+            row_start=1,
+            parquet_out=True,
+        )
+        processor.process()
+        # Read Parquet and write to CSV
+        processor2 = PreSelectDataPolars(
+            input_file=str(parquet_file),
+            output_file=str(csv_out_file),
+            index_col=0,
+            col_start=1,
+            row_index=0,
+            row_start=1,
+            parquet_out=False,
+        )
+        processor2.process()
+        # Check CSV output
+        assert csv_out_file.exists()
+        df = pl.read_csv(csv_out_file)
+        # First row should be the first data row, not the header
+        first_row = df.slice(0, 1)
+        expected_first_data_row = ["A", "Alice", "25", "NY", "85"]
+        assert [str(x) for x in first_row.row(0)] == expected_first_data_row
+        # Data shape: 4 rows (data), 5 columns
+        assert df.shape[0] == 4
+        assert df.shape[1] == 5
