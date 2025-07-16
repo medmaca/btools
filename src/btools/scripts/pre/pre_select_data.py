@@ -78,6 +78,7 @@ class PreSelectDataPolars:
         sheet: str | int | None = None,
         transpose: bool = False,
         index_separator: str = "#",
+        parquet_out: bool = False,
     ):
         """Initialize the PreSelectDataPolars class.
 
@@ -97,6 +98,7 @@ class PreSelectDataPolars:
             sheet: Sheet name (string) or sheet index (integer) to read from Excel files (default: None, uses first sheet)
             transpose: Whether to transpose the data before applying row/column selections (default: False)
             index_separator: Separator to use when concatenating multiple index columns (default: "#")
+            parquet_out: If True, output will be written as a Parquet file (default: False)
         """
         self.input_file = Path(input_file)
         self.index_col = index_col
@@ -107,6 +109,7 @@ class PreSelectDataPolars:
         self.sheet = sheet
         self.transpose = transpose
         self.index_separator = index_separator
+        self.parquet_out = parquet_out
         self.output_file = Path(output_file) if output_file else self._generate_output_filename()
 
     def _parse_index_columns(self) -> list[int]:
@@ -243,6 +246,11 @@ class PreSelectDataPolars:
 
         # Add transpose suffix if transpose is enabled
         transpose_suffix = "_t" if self.transpose else ""
+        if hasattr(self, "parquet_out") and self.parquet_out:
+            base_name = self.input_file.with_name(base_stem + "_subset" + sheet_suffix + transpose_suffix).with_suffix(
+                ".parquet"
+            )
+            return base_name
         base_name = self.input_file.with_name(base_stem + "_subset" + sheet_suffix + transpose_suffix).with_suffix(".csv")
         if _should_write_gzipped():
             return base_name.with_suffix(".csv.gz")
@@ -275,6 +283,7 @@ class PreSelectDataPolars:
         - CSV files (.csv, .csv.gz): Uses polars.read_csv with auto-detected or custom separator
         - Excel files (.xlsx, .xls): Uses polars.read_excel (note: .gz not supported for Excel)
         - TSV files (.tsv, .tsv.gz): Uses polars.read_csv with tab separator
+        - Parquet files (.parquet): Treats first row as header, rest as data
         - Other formats: Defaults to CSV format
 
         Automatically handles gzip-compressed files by detecting .gz extension.
@@ -298,6 +307,22 @@ class PreSelectDataPolars:
             df: pl.DataFrame
             is_gzipped = _is_gzipped(self.input_file)
             true_extension = _get_true_file_extension(self.input_file)
+            # Parquet input support
+            if true_extension == ".parquet":
+                print(f"\tReading Parquet file: {self.input_file}")
+                df = pl.read_parquet(self.input_file)
+                # Treat first row as header, rest as data
+                if df.height < 1:
+                    raise ValueError("Parquet file is empty or missing header row.")
+
+                data_rows = df  # For Parquet, we treat the whole DataFrame as data
+                # Rename columns to generic names for consistency (1-based indexing)
+                num_cols = data_rows.width
+                current_columns = data_rows.columns
+                expected_columns = [f"column_{i + 1}" for i in range(num_cols)]
+                column_mapping = {current_columns[i]: expected_columns[i] for i in range(num_cols)}
+                data_rows = data_rows.rename(column_mapping)
+                return data_rows
 
             # If a custom separator is provided, use it for CSV-like files
             if self.sep is not None:
@@ -555,10 +580,28 @@ class PreSelectDataPolars:
         print(f"Selected data shape: {shape_a},{actual_data_cols}")
         print(f"Saving to: {updated_output_file}")
 
-        # Save to CSV file using Polars (with gzip support)
-        self._write_csv_file(selected_df, updated_output_file, original_headers)
+        # Save to Parquet or CSV file
+        if self.parquet_out or str(updated_output_file).endswith(".parquet"):
+            self._write_parquet_file(selected_df, updated_output_file, original_headers)
+        else:
+            self._write_csv_file(selected_df, updated_output_file, original_headers)
 
         print("Processing completed successfully!")
+
+    def _write_parquet_file(self, df: pl.DataFrame, output_file: Path, original_headers: list[str]) -> None:
+        """Write DataFrame to Parquet file, with header row as first row and generic column names.
+
+        Args:
+            df: DataFrame to write (with generic column names)
+            output_file: Path where to write the file
+            original_headers: List of original column headers to write as first row
+        """
+        # Create a header row DataFrame with the original headers
+        header_row = pl.DataFrame([original_headers], schema=df.schema, orient="row")
+        # Concatenate header row with data
+        df_with_headers = pl.concat([header_row, df], how="vertical")
+        # Write with generic column names
+        df_with_headers.write_parquet(str(output_file), compression="snappy")
 
     def _write_csv_file(self, df: pl.DataFrame, output_file: Path, original_headers: list[str]) -> None:
         """Write DataFrame to CSV file, with optional gzip compression.
@@ -609,16 +652,20 @@ class PreSelectDataPolars:
 def main():
     """Main function for command-line usage."""
     # Example usage - this can be replaced with click integration
-    import sys
+    import argparse
 
-    if len(sys.argv) < 2:
-        print("Usage: python pre_select_data.py <input_file> [output_file]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Select subset of data from input files using Polars.")
+    parser.add_argument("input_file", help="Path to input data file")
+    parser.add_argument("output_file", nargs="?", default=None, help="Path to output file")
+    parser.add_argument("-p", "--parquet", action="store_true", help="Write output as Parquet file")
+    # ...existing code for other arguments...
+    args = parser.parse_args()
 
-    input_file = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else None
-
-    processor = PreSelectDataPolars(input_file=input_file, output_file=output_file)
+    processor = PreSelectDataPolars(
+        input_file=args.input_file,
+        output_file=args.output_file,
+        parquet_out=args.parquet,
+    )
     processor.process()
 
 

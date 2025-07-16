@@ -30,21 +30,28 @@ def pre_group():
 # Data selection command
 @pre_group.command("select_data")
 @click.argument("input_file", type=click.Path(exists=True))
-@click.option("--output", "-o", help="Output CSV file path (defaults to input file with '_subset.csv' suffix)")
+@click.option(
+    "--output",
+    "-o",
+    help=("Output file path (CSV or Parquet; defaults to input file with '_subset.csv' or '.parquet' suffix)"),
+)
 @click.option(
     "--index-col",
     "-i",
     default="0",
-    help="Column(s) to use as row index. Single integer (e.g., 0) or comma-separated integers "
-    + "(e.g., '1,2,4') for concatenated index (default: 0)",
+    help=(
+        "Column(s) to use as row index. Single integer (e.g., 0) or "
+        "comma-separated integers (e.g., '1,2,4') for concatenated index (default: 0)"
+    ),
 )
 @click.option(
     "--col-start",
     "-c",
     default="1",
-    help="Column selection (zero-based, default: 1). "
-    "Supports single columns (e.g., '1'), ranges (e.g., '1:5' for columns 1-5), "
-    "and multiple ranges (e.g., '1:3,5:8' for columns 1-3 and 5-8)",
+    help=(
+        "Column selection (zero-based, default: 1). Supports single columns (e.g., '1'), "
+        "ranges (e.g., '1:5'), and multiple ranges (e.g., '1:3,5:8')"
+    ),
 )
 @click.option("--row-index", "--ri", default=0, help="Row to use as column header (zero-based, default: 0)")
 @click.option(
@@ -52,9 +59,10 @@ def pre_group():
     "--rs",
     "-r",
     default="1",
-    help="Row selection (zero-based, default: 1). "
-    "Supports single rows (e.g., '1'), ranges (e.g., '1:5' for rows 1-5), "
-    "and multiple ranges (e.g., '1:3,5:8' for rows 1-3 and 5-8)",
+    help=(
+        "Row selection (zero-based, default: 1). Supports single rows (e.g., '1'), "
+        "ranges (e.g., '1:5'), and multiple ranges (e.g., '1:3,5:8')"
+    ),
 )
 @click.option("--sep", "-s", help="Separator/delimiter to use when reading the file (overrides auto-detection)")
 @click.option("--sheet", help="Sheet name or number to read from Excel files (default: first sheet)")
@@ -71,6 +79,13 @@ def pre_group():
     default="#",
     help="Separator to use when concatenating multiple index columns (default: '#')",
 )
+@click.option(
+    "--parquet",
+    "-p",
+    is_flag=True,
+    default=False,
+    help="Write output as Parquet file (default: CSV)",
+)
 def select_data(
     input_file: str,
     output: str | None,
@@ -82,39 +97,44 @@ def select_data(
     sheet: str | None,
     transpose: bool,
     index_separator: str,
+    parquet: bool,
 ):
-    """Extract subsets of data from input files and save as CSV.
+    """Extract subsets of data from input files and save as CSV or Parquet.
 
-    Reads data from various file formats (CSV, Excel, TSV) and allows selection of
-    specific subsets based on flexible row and column parameters. All indices are
-    zero-based. Uses Polars for fast data processing.
+    Reads data from various file formats (CSV, Excel, TSV, Parquet) and allows selection of
+    specific subsets based on flexible row and column parameters. All indices are zero-based.
+    Uses Polars for fast data processing.
 
     Args:
-        input_file: Path to the input data file (CSV, Excel, TSV, etc.).
-        output: Custom output file path. If not provided, defaults to input filename
-            with '_subset.csv' suffix.
-        index_col: Column(s) to use as row index. Can be a single integer ("0") or
+        input_file (str): Path to the input data file (CSV, Excel, TSV, Parquet, etc.).
+        output (str, optional): Custom output file path. If not provided, defaults to input filename
+            with '_subset.csv' or '.parquet' suffix depending on --parquet flag.
+        index_col (str): Column(s) to use as row index. Can be a single integer ("0") or
             comma-separated integers ("1,2,4") for concatenated index.
-        col_start: Column selection starting point. Supports single columns ("1"),
+        col_start (str): Column selection starting point. Supports single columns ("1"),
             ranges ("1:5"), and multiple ranges ("1:3,5:8").
-        row_index: Row to use as column header (zero-based).
-        row_start: Row selection starting point. Supports single rows ("1"),
+        row_index (int): Row to use as column header (zero-based).
+        row_start (str): Row selection starting point. Supports single rows ("1"),
             ranges ("1:5"), and multiple ranges ("1:3,5:8").
-        sep: Custom separator/delimiter for reading files (overrides auto-detection).
-        sheet: Excel sheet name or number (0-based). If not specified, uses first sheet.
-        transpose: If True, transpose data before applying row/column selections.
-        index_separator: Separator for concatenating multiple index columns.
+        sep (str, optional): Custom separator/delimiter for reading files (overrides auto-detection).
+        sheet (str, optional): Excel sheet name or number (0-based). If not specified, uses first sheet.
+        transpose (bool): If True, transpose data before applying row/column selections.
+        index_separator (str): Separator for concatenating multiple index columns.
+        parquet (bool): If True, output will be written as a Parquet file (default: False).
 
     Raises:
         click.Abort: If file processing fails or invalid parameters are provided.
 
     Note:
-        Output format is CSV unless GZIP_OUT environment variable is set to True,
-        which creates .csv.gz files instead.
+        Output format is CSV unless --parquet is specified, in which case output is Parquet.
+        GZIP compression is not applied to Parquet files.
 
     Examples:
         Basic usage with defaults:
             $ btools pre select_data input.csv
+
+        Output as Parquet:
+            $ btools pre select_data input.csv --parquet
 
         Select data starting from column 2, using row 1 as headers:
             $ btools pre select_data input.xlsx --col-start 2 --row-index 1
@@ -150,6 +170,7 @@ def select_data(
             sheet=sheet,
             transpose=transpose,
             index_separator=index_separator,
+            parquet_out=parquet,
         )
         processor.process()
     except Exception as e:
