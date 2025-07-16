@@ -505,12 +505,16 @@ class PreViewData:
 
         # If we can fit all columns in one table, do that
         if total_cols <= cols_per_section:
-            return self._create_single_table(display_df, title_text, col_width, start_col)
+            return self._create_single_table(display_df, title_text, col_width, start_col, start_row)
         else:
             # Create multiple sections
-            return self._create_multi_section_table(display_df, title_text, col_width, start_col, cols_per_section)
+            return self._create_multi_section_table(
+                display_df, title_text, col_width, start_col, cols_per_section, start_row
+            )
 
-    def _create_single_table(self, display_df: pl.DataFrame, title: str, col_width: int, start_col: int) -> Table:
+    def _create_single_table(
+        self, display_df: pl.DataFrame, title: str, col_width: int, start_col: int, start_row: int
+    ) -> Table:
         """Create a single table for all columns."""
         table = Table(
             title=title,
@@ -518,7 +522,10 @@ class PreViewData:
             header_style="bold cyan",
         )
 
-        # Add all columns
+        # Add row number column first
+        table.add_column("Row", style="dim yellow", max_width=8, overflow="ellipsis")
+
+        # Add all data columns
         for col_name in display_df.columns:
             # Truncate column name if needed for narrow columns
             display_name = (
@@ -526,14 +533,19 @@ class PreViewData:
             )
             table.add_column(display_name, style="white", max_width=col_width, overflow="ellipsis")
 
-        # Add column number row
+        # Add column number row (with empty cell for row number column)
         col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
-        table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
+        table.add_row("", *[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
 
-        # Add data rows
+        # Add data rows with row numbers
         max_cell_len = max(6, col_width - 2)
-        for row in display_df.iter_rows():
+        for row_idx, row in enumerate(display_df.iter_rows()):
             formatted_row: list[str] = []
+            # Add row number as first column (using actual row index from start_row)
+            actual_row_num = start_row + row_idx
+            formatted_row.append(f"[dim yellow]#{actual_row_num}[/dim yellow]")
+
+            # Add data values
             for val in row:
                 if val is None:
                     formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
@@ -548,7 +560,13 @@ class PreViewData:
         return table
 
     def _create_multi_section_table(
-        self, display_df: pl.DataFrame, base_title: str, col_width: int, start_col: int, cols_per_section: int
+        self,
+        display_df: pl.DataFrame,
+        base_title: str,
+        col_width: int,
+        start_col: int,
+        cols_per_section: int,
+        start_row: int,
     ) -> Table:
         """Create all sections and print them in correct order."""
         total_cols = len(display_df.columns)
@@ -564,7 +582,9 @@ class PreViewData:
                 f"🔍 Data Preview - Section {section_idx + 1}/{num_sections} "
                 f"(Cols {start_col + section_start}-{start_col + section_end - 1})"
             )
-            section_table = self._create_single_table(section_df, section_title, col_width, start_col + section_start)
+            section_table = self._create_single_table(
+                section_df, section_title, col_width, start_col + section_start, start_row
+            )
 
             if section_idx > 0:
                 self.console.print("\n")

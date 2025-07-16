@@ -169,7 +169,7 @@ def select_data(
 @click.option(
     "--cols",
     "-c",
-    default="25",
+    default="10",
     help="Number of columns to display, range (e.g., '5:15'), or multiple ranges (e.g., '1:5,10:15') (default: 25)",
 )
 @click.option("--output-info", "--oi", help="If set will output information to a TOML file", default=False, is_flag=True)
