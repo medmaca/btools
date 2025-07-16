@@ -232,12 +232,13 @@ class PreViewData:
         self.config = ViewConfig()
 
     def _read_data(self) -> pl.DataFrame:
-        """Read data from the input file using Polars.
+        """Read data from the input file using Polars with headers for analysis.
 
         Uses lazy or eager loading based on VIEW_LAZY_LOAD environment variable.
+        This method reads with headers for proper analysis functionality.
 
         Returns:
-            Polars DataFrame containing the input data
+            Polars DataFrame containing the input data with headers
 
         Raises:
             FileNotFoundError: If the input file doesn't exist
@@ -250,7 +251,71 @@ class PreViewData:
             is_gzipped = _is_gzipped(self.input_file)
             true_extension = _get_true_file_extension(self.input_file)
 
-            # Custom separator handling - read without headers
+            # Custom separator handling - read with headers for analysis
+            if self.sep is not None:
+                if self.sep == "\\t":
+                    if self.config.use_lazy_loading:
+                        return pl.scan_csv(self.input_file, separator="\t").collect()
+                    else:
+                        return pl.read_csv(self.input_file, separator="\t")
+                else:
+                    if self.config.use_lazy_loading:
+                        return pl.scan_csv(self.input_file, separator=self.sep).collect()
+                    else:
+                        return pl.read_csv(self.input_file, separator=self.sep)
+
+            # Auto-detect format based on true extension
+            # Read with headers for proper analysis functionality
+            if true_extension == ".csv":
+                if self.config.use_lazy_loading:
+                    return pl.scan_csv(self.input_file).collect()
+                else:
+                    return pl.read_csv(self.input_file)
+            elif true_extension in [".xlsx", ".xls"]:
+                if is_gzipped:
+                    raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
+
+                # Excel files must be read eagerly
+                if self.sheet is not None:
+                    return pl.read_excel(self.input_file, sheet_name=self.sheet)
+                else:
+                    return pl.read_excel(self.input_file)
+            elif true_extension == ".tsv":
+                if self.config.use_lazy_loading:
+                    return pl.scan_csv(self.input_file, separator="\t").collect()
+                else:
+                    return pl.read_csv(self.input_file, separator="\t")
+            else:
+                # Default to CSV format
+                if self.config.use_lazy_loading:
+                    return pl.scan_csv(self.input_file).collect()
+                else:
+                    return pl.read_csv(self.input_file)
+
+        except Exception as e:
+            raise OSError(f"Error reading file {self.input_file}: {str(e)}") from e
+
+    def _read_data_for_preview(self) -> pl.DataFrame:
+        """Read data from the input file without headers for Data Preview.
+
+        Uses lazy or eager loading based on VIEW_LAZY_LOAD environment variable.
+        This method reads without headers to show raw file content with accurate row numbering.
+
+        Returns:
+            Polars DataFrame containing the raw input data without headers
+
+        Raises:
+            FileNotFoundError: If the input file doesn't exist
+            Exception: If there's an error reading the file
+        """
+        if not self.input_file.exists():
+            raise FileNotFoundError(f"Input file not found: {self.input_file}")
+
+        try:
+            is_gzipped = _is_gzipped(self.input_file)
+            true_extension = _get_true_file_extension(self.input_file)
+
+            # Custom separator handling - read without headers for raw data
             if self.sep is not None:
                 if self.sep == "\\t":
                     if self.config.use_lazy_loading:
@@ -264,7 +329,7 @@ class PreViewData:
                         return pl.read_csv(self.input_file, separator=self.sep, has_header=False)
 
             # Auto-detect format based on true extension
-            # Read without headers to treat all rows as data
+            # Read without headers to treat all rows as raw data
             if true_extension == ".csv":
                 if self.config.use_lazy_loading:
                     return pl.scan_csv(self.input_file, has_header=False).collect()
@@ -447,7 +512,7 @@ class PreViewData:
         """Get data subset based on row and column selections.
 
         Args:
-            df: Input DataFrame
+            df: Input DataFrame to select from
 
         Returns:
             Tuple of (selected_df, start_row, end_row, start_col, end_col)
@@ -777,43 +842,54 @@ class PreViewData:
             return data
 
     def view(self) -> None:
-        """Main method to view and analyze the dataset (original behavior restored)."""
+        """Main method to view and analyze the dataset with dual reading strategy."""
         self.console.print(f"\n[bold green]📁 Loading dataset: {self.input_file.name}[/bold green]")
-        # Read the data
-        df = self._read_data()
 
-        # Apply optional environment conditions
-        if LOAD_ENV:
-            df = _apply_environment_conditions(df)
-
-        # Get selected data subset
-        display_df, start_row, end_row, start_col, end_col = self._get_selected_data(df)
-
-        # Determine what to show based on flags (original logic)
+        # Determine what to show based on flags
         show_any_section = self.show_dataset_overview or self.show_column_info or self.show_numeric_stats
+        show_data_preview = not show_any_section  # Show data preview by default or when no analysis flags are set
 
-        if show_any_section:
-            # Show specific sections only
+        # Read data with appropriate strategy based on what we're displaying
+        analysis_df = None
+        preview_df = None
+
+        if show_any_section or self.output_info:
+            # Need header-aware data for analysis
+            analysis_df = self._read_data()
+            if LOAD_ENV:
+                analysis_df = _apply_environment_conditions(analysis_df)
+
+        if show_data_preview:
+            # Need raw data for accurate Data Preview
+            preview_df = self._read_data_for_preview()
+            if LOAD_ENV:
+                preview_df = _apply_environment_conditions(preview_df)
+
+        # Show analysis sections if requested
+        if show_any_section and analysis_df is not None:
             if self.show_dataset_overview:
-                overview_table = self._create_data_overview_table(df)
+                overview_table = self._create_data_overview_table(analysis_df)
                 self.console.print(overview_table)
 
             if self.show_column_info:
-                column_table = self._create_column_info_table(df)
+                column_table = self._create_column_info_table(analysis_df)
                 self.console.print("\n", column_table)
 
             if self.show_numeric_stats:
-                stats_table = self._create_statistics_table(df)
+                stats_table = self._create_statistics_table(analysis_df)
                 self.console.print("\n", stats_table)
-        else:
-            # Default: show only data preview
+
+        # Show data preview if requested (default behavior)
+        if show_data_preview and preview_df is not None:
+            # Get selected data subset from preview data
+            display_df, start_row, end_row, start_col, end_col = self._get_selected_data(preview_df)
             preview_table = self._create_data_preview_table(display_df, start_row, end_row, start_col, end_col)
             self.console.print("\n", preview_table)
 
-        # Generate detailed info file if requested
-        if self.output_info:
+        # Generate detailed info file if requested (uses analysis data)
+        if self.output_info and analysis_df is not None:
             self.console.print(f"\n[dim]Generating detailed info file: {self.output_info}[/dim]")
-            detailed_info = self._generate_detailed_info(df)
+            detailed_info = self._generate_detailed_info(analysis_df)
             cleaned_info = self._clean_for_toml(detailed_info)
 
             try:
