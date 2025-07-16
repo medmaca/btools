@@ -114,9 +114,9 @@ class PreViewData:
         output_info: str | None = None,
         sep: str | None = None,
         sheet: str | None = None,
-        show_stats: bool = True,
-        show_types: bool = True,
-        show_missing: bool = True,
+        show_dataset_overview: bool = False,
+        show_column_info: bool = False,
+        show_numeric_stats: bool = False,
         display_mode: str = "auto",
     ):
         """Initialize the PreViewData class.
@@ -130,9 +130,9 @@ class PreViewData:
             output_info: Path to output detailed info file (TOML format)
             sep: Separator/delimiter to use when reading the file (default: None, auto-detect)
             sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
-            show_stats: Whether to show basic statistics (default: True)
-            show_types: Whether to show data types (default: True)
-            show_missing: Whether to show missing value analysis (default: True)
+            show_dataset_overview: Whether to show dataset overview only (default: False)
+            show_column_info: Whether to show column information only (default: False)
+            show_numeric_stats: Whether to show numeric statistics only (default: False)
             display_mode: Display mode for data preview. Options: "auto", "normal", "rotated", "wrapped" (default: "auto")
         """
         self.input_file = Path(input_file)
@@ -141,9 +141,9 @@ class PreViewData:
         self.output_info = Path(output_info) if output_info else None
         self.sep = sep
         self.sheet = sheet
-        self.show_stats = show_stats
-        self.show_types = show_types
-        self.show_missing = show_missing
+        self.show_dataset_overview = show_dataset_overview
+        self.show_column_info = show_column_info
+        self.show_numeric_stats = show_numeric_stats
         self.display_mode = display_mode
         self.console = Console()
         self.config = ViewConfig()
@@ -450,6 +450,10 @@ class PreViewData:
         for col_name in display_df.columns:
             table.add_column(col_name, style="white", max_width=self.config.normal_max_col_width, overflow="ellipsis")
 
+        # Add column number row
+        col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
+        table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
+
         # Add rows
         for row in display_df.iter_rows():
             formatted_row: list[str] = []
@@ -499,6 +503,10 @@ class PreViewData:
                 justify="center",
             )
 
+        # Add column number row
+        col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
+        table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
+
         # Add rows
         for row in display_df.iter_rows():
             formatted_row: list[str] = []
@@ -538,6 +546,10 @@ class PreViewData:
             # Add columns for this section
             for col_name in section_df.columns:
                 table.add_column(col_name, style="white", max_width=self.config.wrapped_max_col_width, overflow="ellipsis")
+
+            # Add column number row
+            section_col_numbers = [str(start_col + section_start + i) for i in range(len(section_df.columns))]
+            table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in section_col_numbers])
 
             # Add rows for this section
             for row in section_df.iter_rows():
@@ -600,7 +612,7 @@ class PreViewData:
         columns_with_missing: list[str] = []
 
         # Analyze each column
-        for col_name in df.columns:
+        for col_idx, col_name in enumerate(df.columns):
             col_data = df[col_name]
             null_count = col_data.null_count()
 
@@ -610,6 +622,7 @@ class PreViewData:
 
             col_info: dict[str, Any] = {
                 "dtype": str(col_data.dtype),
+                "column_number": col_idx,
                 "non_null_count": df.height - null_count,
                 "null_count": null_count,
                 "null_percentage": (null_count / df.height * 100) if df.height > 0 else 0,
@@ -717,23 +730,26 @@ class PreViewData:
         if end_col > df.width:
             end_col = df.width
 
-        # Create and display overview
-        overview_table = self._create_data_overview_table(df)
-        self.console.print(overview_table)
+        # Determine what to show based on flags
+        show_any_section = self.show_dataset_overview or self.show_column_info or self.show_numeric_stats
 
-        # Show column information if requested
-        if self.show_types or self.show_missing:
-            column_table = self._create_column_info_table(df)
-            self.console.print("\n", column_table)
+        if show_any_section:
+            # Show specific sections only
+            if self.show_dataset_overview:
+                overview_table = self._create_data_overview_table(df)
+                self.console.print(overview_table)
 
-        # Show statistics if requested
-        if self.show_stats:
-            stats_table = self._create_statistics_table(df)
-            self.console.print("\n", stats_table)
+            if self.show_column_info:
+                column_table = self._create_column_info_table(df)
+                self.console.print("\n", column_table)
 
-        # Show data preview
-        preview_table = self._create_data_preview_table(df, start_row, end_row, start_col, end_col)
-        self.console.print("\n", preview_table)
+            if self.show_numeric_stats:
+                stats_table = self._create_statistics_table(df)
+                self.console.print("\n", stats_table)
+        else:
+            # Default: show only data preview
+            preview_table = self._create_data_preview_table(df, start_row, end_row, start_col, end_col)
+            self.console.print("\n", preview_table)
 
         # Generate detailed info file if requested
         if self.output_info:
@@ -761,9 +777,9 @@ class PreViewData:
             "output_info": str(self.output_info) if self.output_info else None,
             "sep": self.sep,
             "sheet": self.sheet,
-            "show_stats": self.show_stats,
-            "show_types": self.show_types,
-            "show_missing": self.show_missing,
+            "show_dataset_overview": self.show_dataset_overview,
+            "show_column_info": self.show_column_info,
+            "show_numeric_stats": self.show_numeric_stats,
             "display_mode": self.display_mode,
         }
 
@@ -786,9 +802,11 @@ def main():
         default="auto",
         help="Display mode for data preview (default: auto)",
     )
-    parser.add_argument("--no-stats", action="store_true", help="Don't show statistical summary")
-    parser.add_argument("--no-types", action="store_true", help="Don't show data types")
-    parser.add_argument("--no-missing", action="store_true", help="Don't show missing value analysis")
+
+    # New display section flags
+    parser.add_argument("--dataset-overview", "--do", action="store_true", help="Show dataset overview only")
+    parser.add_argument("--column-info", "--ci", action="store_true", help="Show column information only")
+    parser.add_argument("--numeric-stats", "--ns", action="store_true", help="Show numeric statistics only")
 
     args = parser.parse_args()
 
@@ -800,9 +818,9 @@ def main():
             output_info=args.output_info,
             sep=args.sep,
             sheet=args.sheet,
-            show_stats=not args.no_stats,
-            show_types=not args.no_types,
-            show_missing=not args.no_missing,
+            show_dataset_overview=args.dataset_overview,
+            show_column_info=args.column_info,
+            show_numeric_stats=args.numeric_stats,
             display_mode=args.display_mode,
         )
         viewer.view()

@@ -1,4 +1,8 @@
-"""Defines all CLI commands for the template-cli application."""
+"""CLI commands for data pre-processing and exploration.
+
+This module defines Click command groups and commands for data exploration,
+profiling, and subset selection functionality in the btools package.
+"""
 
 import os
 
@@ -17,9 +21,9 @@ def pre_group():
     data file formats including CSV, Excel, and TSV files. All commands use Polars
     for fast data processing and support both regular and gzip-compressed files.
 
-    Available commands:
-    - select_data: Extract subsets of data with flexible row/column selection
-    - view: Quick data profiling and preview with beautiful terminal output
+    Commands:
+        select_data: Extract subsets of data with flexible row/column selection.
+        view: Quick data profiling and preview with beautiful terminal output.
     """
 
 
@@ -79,90 +83,56 @@ def select_data(
     transpose: bool,
     index_separator: str,
 ):
-    """Select a subset of data from an input file and save as CSV (or CSV.gz).
+    """Extract subsets of data from input files and save as CSV.
 
-    This command reads data from various file formats (CSV, Excel, TSV) and allows you
-    to select specific subsets based on column and row parameters. All indices are zero-based.
-    This tool uses Polars for fast data processing.
+    Reads data from various file formats (CSV, Excel, TSV) and allows selection of
+    specific subsets based on flexible row and column parameters. All indices are
+    zero-based. Uses Polars for fast data processing.
 
-    SUPPORTED FILE FORMATS:
-    - CSV files (.csv, .csv.gz): Auto-detected or custom separator
-    - Excel files (.xlsx, .xls): Sheet selection supported
-    - TSV files (.tsv, .tsv.gz): Tab-separated values
-    - Other delimited files: Custom separator via --sep
+    Args:
+        input_file: Path to the input data file (CSV, Excel, TSV, etc.).
+        output: Custom output file path. If not provided, defaults to input filename
+            with '_subset.csv' suffix.
+        index_col: Column(s) to use as row index. Can be a single integer ("0") or
+            comma-separated integers ("1,2,4") for concatenated index.
+        col_start: Column selection starting point. Supports single columns ("1"),
+            ranges ("1:5"), and multiple ranges ("1:3,5:8").
+        row_index: Row to use as column header (zero-based).
+        row_start: Row selection starting point. Supports single rows ("1"),
+            ranges ("1:5"), and multiple ranges ("1:3,5:8").
+        sep: Custom separator/delimiter for reading files (overrides auto-detection).
+        sheet: Excel sheet name or number (0-based). If not specified, uses first sheet.
+        transpose: If True, transpose data before applying row/column selections.
+        index_separator: Separator for concatenating multiple index columns.
 
-    OUTPUT BEHAVIOR:
-    By default, the output file will be named with the input filename plus '_subset.csv' suffix.
-    For example, 'data.xlsx' will output to 'data_subset.csv'. The output format is always CSV
-    unless the GZIP_OUT environment variable is set, which creates .csv.gz files.
+    Raises:
+        click.Abort: If file processing fails or invalid parameters are provided.
 
-    MAIN OPTIONS:
-    --output/-o: Specify custom output file path
-    --index-col/-i: Column(s) to use as row index (default: 0)
-      • Single column: --index-col 0
-      • Multiple columns: --index-col "1,2,4" (concatenated with separator)
-    --col-start/-c: Column selection starting point (default: 1)
-      • Single column to end: --col-start 2
-      • Range: --col-start "1:5" (columns 1-5)
-      • Multiple ranges: --col-start "1:3,5:8" (columns 1-3 and 5-8)
-    --row-index/--ri: Row to use as column header (default: 0)
-    --row-start/--rs/-r: Row selection starting point (default: 1)
-      • Single row to end: --row-start 2
-      • Range: --row-start "1:10" (rows 1-10)
-      • Multiple ranges: --row-start "1:5,10:15" (rows 1-5 and 10-15)
+    Note:
+        Output format is CSV unless GZIP_OUT environment variable is set to True,
+        which creates .csv.gz files instead.
 
-    ADVANCED OPTIONS:
-    --transpose/-t: Transpose data (swap rows/columns) before applying selections
-    --sep/-s: Custom separator for delimited files (e.g., "|", "\\t" for tab)
-    --sheet: Excel sheet selection by name or index (0-based)
-    --index-separator/--is: Separator for concatenating multiple index columns (default: "#")
+    Examples:
+        Basic usage with defaults:
+            $ btools pre select_data input.csv
 
-    OPERATION ORDER:
-    1. Read data from input file
-    2. Apply transpose (if --transpose is specified)
-    3. Apply row and column selections
-    4. Write to output file
+        Select data starting from column 2, using row 1 as headers:
+            $ btools pre select_data input.xlsx --col-start 2 --row-index 1
 
-    Example usage:
-    \b
-    # Basic usage with defaults (outputs to input_subset.csv)
-    btools pre select_data input.csv
+        Transpose data before selection:
+            $ btools pre select_data input.csv --transpose
 
-    # Select data starting from column 2, using row 1 as headers
-    btools pre select_data input.xlsx --col-start 2 --row-index 1
+        Select specific column and row ranges:
+            $ btools pre select_data input.xlsx --col-start "1:5" --row-start "1:10"
 
-    # Transpose data before selection (rows become columns)
-    btools pre select_data input.csv --transpose
+        Use multiple columns for index with custom separator:
+            $ btools pre select_data input.csv --index-col "1,2,4" --index-separator "#"
 
-    # Transpose and then select specific columns and rows
-    btools pre select_data input.xlsx --transpose --col-start "1:5" --row-start "1:10"
+        Process Excel file with specific sheet:
+            $ btools pre select_data workbook.xlsx --sheet "Data Sheet" --output results.csv
 
-    # Select columns 1-5 and rows 1-10 (range support)
-    btools pre select_data input.xlsx --col-start "1:5" --row-start "1:10"
-
-    # Select first 25 rows starting from column 3
-    btools pre select_data input.csv --col-start 3 --row-start "1:25"
-
-    # Select multiple column ranges (1-3 and 5-8) and row ranges (1-10 and 20-30)
-    btools pre select_data input.xlsx --col-start "1:3,5:8" --row-start "1:10,20:30"
-
-    # Use multiple columns (1,2,4) for index, separated by '#'
-    btools pre select_data input.csv --index-col "1,2,4" --index-separator "#"
-
-    # Specify a specific Excel sheet by name
-    btools pre select_data workbook.xlsx --sheet "Data Sheet" --output results.csv
-
-    # Specify a specific Excel sheet by index (0-based)
-    btools pre select_data workbook.xlsx --sheet 1 --output results.csv
-
-    # Specify custom output file and parameters
-    btools pre select_data data.tsv --output subset.csv --index-col 1 --row-start 2
-
-    # Use custom separator for delimited files
-    btools pre select_data data.txt --sep "|" --output result.csv
-
-    # Use custom index separator for multiple index columns
-    btools pre select_data data.csv --index-col "0,1" --index-separator "_" --output result.csv
+        Use custom separator for delimited files:
+            $ btools pre select_data data.txt --sep "|" --output result.csv
     """
     try:
         # Convert index_col to int if it's a single number, otherwise keep as string
@@ -190,7 +160,7 @@ def select_data(
 # Data viewing/profiling command
 @pre_group.command("view")
 @click.argument("input_file", type=click.Path(exists=True))
-@click.option("--rows", "-r", default="50", help="Number of rows to display or range (e.g., '50' or '10,60') (default: 50)")
+@click.option("--rows", "-r", default="10", help="Number of rows to display or range (e.g., '50' or '10,60') (default: 10)")
 @click.option(
     "--cols", "-c", default="25", help="Number of columns to display or range (e.g., '25' or '5,15') (default: 25)"
 )
@@ -204,9 +174,9 @@ def select_data(
     default="auto",
     help="Display mode for data preview (default: auto)",
 )
-@click.option("--no-stats", is_flag=True, default=False, help="Don't show statistical summary")
-@click.option("--no-types", is_flag=True, default=False, help="Don't show data types")
-@click.option("--no-missing", is_flag=True, default=False, help="Don't show missing value analysis")
+@click.option("--dataset-overview", "--do", is_flag=True, default=False, help="Show dataset overview only")
+@click.option("--column-info", "--ci", is_flag=True, default=False, help="Show column information only")
+@click.option("--numeric-stats", "--ns", is_flag=True, default=False, help="Show numeric statistics only")
 def view_data(
     input_file: str,
     rows: str,
@@ -216,85 +186,72 @@ def view_data(
     sep: str | None,
     sheet: str | None,
     display_mode: str,
-    no_stats: bool,
-    no_types: bool,
-    no_missing: bool,
+    dataset_overview: bool,
+    column_info: bool,
+    numeric_stats: bool,
 ):
-    """Quickly view and profile datasets with beautiful terminal output.
+    """View and profile datasets with beautiful terminal output.
 
-    This command provides a fast way to explore datasets by displaying comprehensive
-    information about your data files. It uses Polars for fast data processing and
-    Rich for beautiful terminal output with syntax highlighting and formatted tables.
+    Provides fast data exploration by displaying comprehensive information about data
+    files. Uses Polars for fast data processing and Rich for beautiful terminal output
+    with syntax highlighting and formatted tables.
 
-    INFORMATION DISPLAYED:
-    - Dataset overview (rows, columns, file size, memory usage)
-    - Column information (data types, missing values, unique counts)
-    - Statistical summary for numeric columns (mean, std, min, max, quartiles)
-    - Data preview with configurable row and column display
-    - Missing value analysis and patterns
+    By default, shows only the data preview with column numbers displayed in the first
+    row to help identify column positions.
 
-    SUPPORTED FILE FORMATS:
-    - CSV files (.csv, .csv.gz): Auto-detected or custom separator
-    - Excel files (.xlsx, .xls): Sheet selection supported
-    - TSV files (.tsv, .tsv.gz): Tab-separated values
-    - Other delimited files: Custom separator via --sep
+    Args:
+        input_file: Path to the input data file (CSV, Excel, TSV, etc.).
+        rows: Number of rows to display or range specification. Can be a number ("50")
+            or range ("10,60").
+        cols: Number of columns to display or range specification. Can be a number ("25")
+            or range ("5,15").
+        output_info: If True, generates a detailed TOML report file.
+        output_info_file: Custom filename for TOML report output.
+        sep: Custom separator for CSV/delimited files (overrides auto-detection).
+        sheet: Excel sheet name or number (0-based). If not specified, uses first sheet.
+        display_mode: Table layout mode. Options are "auto", "normal", "rotated", "wrapped".
+        dataset_overview: If True, shows only dataset overview section (file info,
+            shape, memory usage).
+        column_info: If True, shows only column information section (data types,
+            missing values, unique counts).
+        numeric_stats: If True, shows only numeric statistics section (mean, std,
+            min, max, quartiles).
 
-    MAIN OPTIONS:
-    --rows/-r: Number or range of rows to display (default: 50)
-      • Number: --rows 100 (first 100 rows)
-      • Range: --rows "10,60" (rows 10-60)
-    --cols/-c: Number or range of columns to display (default: 25)
-      • Number: --cols 15 (first 15 columns)
-      • Range: --cols "5,15" (columns 5-15)
+    Raises:
+        click.Abort: If file processing fails or invalid parameters are provided.
 
-    OUTPUT OPTIONS:
-    --output-info/--oi: Generate detailed TOML report file
-    --output-info-file/--oif: Custom filename for TOML report (default: fileinfo.toml)
+    Note:
+        Analysis section flags (--dataset-overview, --column-info, --numeric-stats)
+        can be combined to show multiple sections. When any of these flags are used,
+        the default data preview is suppressed.
 
-    FILE FORMAT OPTIONS:
-    --sep/-s: Custom separator for delimited files (e.g., "|", "\\t" for tab)
-    --sheet: Excel sheet selection by name or index (0-based)
+    Examples:
+        Basic usage - show data preview with column numbers:
+            $ btools pre view data.csv
 
-    DISPLAY CUSTOMIZATION:
-    --display-mode: Control table layout
-      • auto: Automatically choose best mode based on column count (default)
-      • normal: Standard horizontal table (best for ≤5 columns)
-      • rotated: Shortened column headers (good for 6-10 columns)
-      • wrapped: Multi-section tables (best for >10 columns)
+        Show specific range of rows and columns:
+            $ btools pre view data.csv --rows "10,100" --cols "5,15"
 
-    ANALYSIS TOGGLES:
-    --no-stats: Skip statistical summary for numeric columns
-    --no-types: Skip data type analysis
-    --no-missing: Skip missing value analysis
+        Show only dataset overview:
+            $ btools pre view data.csv --dataset-overview
 
-    Example usage:
-    \b
-    # Basic usage - show first 50 rows and 25 columns (auto mode)
-    btools pre view data.csv
+        Show dataset overview and column info (no data preview):
+            $ btools pre view data.csv --do --ci
 
-    # Show specific range of rows and columns
-    btools pre view data.csv --rows "10,100" --cols "5,15"
+        Show all analysis sections (no data preview):
+            $ btools pre view data.csv --do --ci --ns
 
-    # Force wrapped display mode for many columns
-    btools pre view data.csv --cols "1,20" --display-mode wrapped
+        Force wrapped display mode for many columns:
+            $ btools pre view data.csv --cols "1,20" --display-mode wrapped
 
-    # Use rotated headers for medium column count
-    btools pre view data.csv --cols 10 --display-mode rotated
+        Generate detailed TOML report:
+            $ btools pre view data.csv --output-info --output-info-file analysis.toml
 
-    # Generate detailed TOML report
-    btools pre view data.csv --output-info --output-info-file analysis.toml
+        Excel file with specific sheet:
+            $ btools pre view data.xlsx --sheet "Sheet2"
 
-    # Excel file with specific sheet
-    btools pre view data.xlsx --sheet "Sheet2"
-
-    # Custom separator and minimal output
-    btools pre view data.txt --sep "|" --no-stats
-
-    # Show only data preview without types or stats, limited columns
-    btools pre view large_data.csv --no-types --no-stats --rows 10 --cols 5
-
-    # Quick peek at first 10 rows and 5 columns with normal display
-    btools pre view data.csv --rows 10 --cols 5 --display-mode normal
+        Custom separator with data preview:
+            $ btools pre view data.txt --sep "|" --rows 10 --cols 5
     """
     try:
         output_info_path: str | None = None
@@ -308,9 +265,9 @@ def view_data(
             output_info=output_info_path,
             sep=sep,
             sheet=sheet,
-            show_stats=not no_stats,
-            show_types=not no_types,
-            show_missing=not no_missing,
+            show_dataset_overview=dataset_overview,
+            show_column_info=column_info,
+            show_numeric_stats=numeric_stats,
             display_mode=display_mode,
         )
         viewer.view()

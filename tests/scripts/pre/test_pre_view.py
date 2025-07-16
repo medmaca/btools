@@ -160,9 +160,9 @@ class TestPreViewData:
         assert viewer.output_info is None
         assert viewer.sep is None
         assert viewer.sheet is None
-        assert viewer.show_stats is True
-        assert viewer.show_types is True
-        assert viewer.show_missing is True
+        assert viewer.show_dataset_overview is False
+        assert viewer.show_column_info is False
+        assert viewer.show_numeric_stats is False
         assert viewer.display_mode == "auto"
         assert isinstance(viewer.console, Console)
         assert isinstance(viewer.config, ViewConfig)
@@ -176,9 +176,9 @@ class TestPreViewData:
             output_info=str(temp_output_file),
             sep=",",
             sheet="Sheet1",
-            show_stats=False,
-            show_types=False,
-            show_missing=False,
+            show_dataset_overview=True,
+            show_column_info=True,
+            show_numeric_stats=True,
             display_mode="normal",
         )
 
@@ -188,9 +188,9 @@ class TestPreViewData:
         assert viewer.output_info == temp_output_file
         assert viewer.sep == ","
         assert viewer.sheet == "Sheet1"
-        assert viewer.show_stats is False
-        assert viewer.show_types is False
-        assert viewer.show_missing is False
+        assert viewer.show_dataset_overview is True
+        assert viewer.show_column_info is True
+        assert viewer.show_numeric_stats is True
         assert viewer.display_mode == "normal"
 
     def test_parse_rows_parameter_single_int(self, csv_file: Path) -> None:
@@ -566,8 +566,8 @@ class TestPreViewData:
                 viewer.view()
 
     def test_view_method_disabled_features(self, csv_file: Path) -> None:
-        """Test view method with disabled features."""
-        viewer = PreViewData(str(csv_file), show_stats=False, show_types=False, show_missing=False)
+        """Test view method with all flags set to show specific sections only."""
+        viewer = PreViewData(str(csv_file), show_dataset_overview=True, show_column_info=True, show_numeric_stats=True)
 
         # Mock console.print to avoid actual output during testing
         with patch.object(viewer.console, "print"):
@@ -582,9 +582,9 @@ class TestPreViewData:
             output_info=str(temp_output_file),
             sep=",",
             sheet="Sheet1",
-            show_stats=False,
-            show_types=True,
-            show_missing=False,
+            show_dataset_overview=True,
+            show_column_info=False,
+            show_numeric_stats=True,
             display_mode="rotated",
         )
 
@@ -597,9 +597,9 @@ class TestPreViewData:
         assert info["output_info"] == str(temp_output_file)
         assert info["sep"] == ","
         assert info["sheet"] == "Sheet1"
-        assert info["show_stats"] is False
-        assert info["show_types"] is True
-        assert info["show_missing"] is False
+        assert info["show_dataset_overview"] is True
+        assert info["show_column_info"] is False
+        assert info["show_numeric_stats"] is True
         assert info["display_mode"] == "rotated"
 
     def test_get_info_no_output(self, csv_file: Path) -> None:
@@ -726,3 +726,82 @@ class TestPreViewData:
 
         finally:
             temp_file.unlink()
+
+    def test_display_section_flags_individual(self, csv_file: Path) -> None:
+        """Test individual display section flags."""
+        # Test dataset overview only
+        viewer = PreViewData(str(csv_file), show_dataset_overview=True)
+        assert viewer.show_dataset_overview is True
+        assert viewer.show_column_info is False
+        assert viewer.show_numeric_stats is False
+
+        # Test column info only
+        viewer = PreViewData(str(csv_file), show_column_info=True)
+        assert viewer.show_dataset_overview is False
+        assert viewer.show_column_info is True
+        assert viewer.show_numeric_stats is False
+
+        # Test numeric stats only
+        viewer = PreViewData(str(csv_file), show_numeric_stats=True)
+        assert viewer.show_dataset_overview is False
+        assert viewer.show_column_info is False
+        assert viewer.show_numeric_stats is True
+
+    def test_display_section_flags_combined(self, csv_file: Path) -> None:
+        """Test combined display section flags."""
+        viewer = PreViewData(
+            str(csv_file),
+            show_dataset_overview=True,
+            show_column_info=True,
+            show_numeric_stats=True,
+        )
+        assert viewer.show_dataset_overview is True
+        assert viewer.show_column_info is True
+        assert viewer.show_numeric_stats is True
+
+        # Mock console.print to avoid actual output during testing
+        with patch.object(viewer.console, "print"):
+            viewer.view()
+
+    def test_default_data_preview_only(self, csv_file: Path) -> None:
+        """Test that default behavior shows only data preview."""
+        viewer = PreViewData(str(csv_file))
+        assert viewer.show_dataset_overview is False
+        assert viewer.show_column_info is False
+        assert viewer.show_numeric_stats is False
+
+        # Mock console.print to avoid actual output during testing
+        with patch.object(viewer.console, "print"):
+            viewer.view()
+
+    def test_column_numbers_in_toml_output(self, csv_file: Path, temp_output_file: Path) -> None:
+        """Test that column numbers are included in TOML output."""
+        viewer = PreViewData(str(csv_file), output_info=str(temp_output_file))
+        df = viewer._read_data()  # type: ignore[attr-defined,reportPrivateUsage]
+        info = viewer._generate_detailed_info(df)  # type: ignore[attr-defined,reportPrivateUsage]
+
+        # Check that column_number is included for each column
+        for col_idx, col_name in enumerate(df.columns):
+            assert "column_number" in info["column_details"][col_name]
+            assert info["column_details"][col_name]["column_number"] == col_idx
+
+        # Check ordering: dtype should come first, then column_number
+        for col_name in df.columns:
+            col_info = info["column_details"][col_name]
+            keys = list(col_info.keys())
+            assert keys[0] == "dtype"
+            assert keys[1] == "column_number"
+
+    def test_data_preview_with_column_numbers(self, sample_dataframe: pl.DataFrame, csv_file: Path) -> None:
+        """Test that data preview includes column numbers row."""
+        viewer = PreViewData(str(csv_file), display_mode="normal")
+
+        # Mock the _read_data method to return our controlled dataframe
+        with patch.object(viewer, "_read_data", return_value=sample_dataframe):
+            table = viewer._create_data_preview_table(sample_dataframe, 0, 5, 0, 5)  # type: ignore[attr-defined,reportPrivateUsage]
+
+            # The table should be a Rich Table
+            assert isinstance(table, Table)
+
+            # Can't easily test the exact content, but we can test that the method doesn't crash
+            # and returns a valid table object

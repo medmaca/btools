@@ -7,7 +7,9 @@ and error handling scenarios.
 # pyright: reportPrivateUsage=false
 
 import gzip
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import polars as pl
 import pytest
@@ -332,6 +334,7 @@ class TestPreSelectDataPolars:
         expected_columns = ["column_1", "column_2", "column_3"]
         assert transposed.columns == expected_columns
 
+    @patch.dict(os.environ, {"GZIP_OUT": "True"})
     def test_excel_sheet_name_in_filename_string_sheet(self, tmp_path: Path) -> None:
         """Test that string sheet names are included in output filename for Excel files."""
         # Create a mock Excel file path (doesn't need to exist for filename generation test)
@@ -344,7 +347,22 @@ class TestPreSelectDataPolars:
 
         output_filename = str(processor.output_file)
         assert "_sheet_Data-Sheet" in output_filename
-        assert output_filename.endswith(".csv.gz")  # Should have .gz due to environment
+        assert output_filename.endswith(".csv.gz")  # Should have .gz due to mocked environment
+
+    @patch.dict(os.environ, {}, clear=True)  # Clear environment to ensure default behavior
+    def test_excel_sheet_name_in_filename_string_sheet_no_gzip(self, tmp_path: Path) -> None:
+        """Test that string sheet names are included in output filename without gzip compression."""
+        # Create a mock Excel file path (doesn't need to exist for filename generation test)
+        excel_file = tmp_path / "test_data.xlsx"
+
+        processor = PreSelectDataPolars(
+            input_file=str(excel_file),
+            sheet="Data Sheet",  # Sheet name with space
+        )
+
+        output_filename = str(processor.output_file)
+        assert "_sheet_Data-Sheet" in output_filename
+        assert output_filename.endswith(".csv")  # Should NOT have .gz due to default behavior
 
     def test_excel_sheet_name_in_filename_integer_sheet(self, tmp_path: Path) -> None:
         """Test that integer sheet indices are included in output filename for Excel files."""
