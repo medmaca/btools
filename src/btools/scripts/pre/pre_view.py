@@ -200,6 +200,7 @@ class PreViewData:
         show_dataset_overview: bool = False,
         show_column_info: bool = False,
         show_numeric_stats: bool = False,
+        show_source_numbers: bool = False,
     ):
         """Initialize PreViewData with unified adaptive display.
 
@@ -213,6 +214,7 @@ class PreViewData:
             show_dataset_overview: Show only dataset overview section
             show_column_info: Show only column information section
             show_numeric_stats: Show only numeric statistics section
+            show_source_numbers: Show original source row/column numbers instead of subset positions
         """
         self.input_file = Path(input_file)
         self.rows = rows
@@ -223,6 +225,7 @@ class PreViewData:
         self.show_dataset_overview = show_dataset_overview
         self.show_column_info = show_column_info
         self.show_numeric_stats = show_numeric_stats
+        self.show_source_numbers = show_source_numbers
 
         # Initialize console and config
         self.console = Console()
@@ -413,6 +416,32 @@ class PreViewData:
 
         return table
 
+    def _get_source_indices(self) -> tuple[list[int], list[int]]:
+        """Get the original source row and column indices for the current selection.
+
+        Returns:
+            Tuple of (source_row_indices, source_col_indices)
+        """
+        # Parse row and column ranges to get original indices
+        row_ranges = _parse_multi_range_parameter(self.rows, "rows")
+        col_ranges = _parse_multi_range_parameter(self.cols, "cols")
+
+        # Collect all selected row indices (original positions)
+        source_rows: list[int] = []
+        for start, end in row_ranges:
+            source_rows.extend(range(start, end + 1))
+
+        # Collect all selected column indices (original positions)
+        source_cols: list[int] = []
+        for start, end in col_ranges:
+            source_cols.extend(range(start, end + 1))
+
+        # Remove duplicates and sort
+        source_rows = sorted(set(source_rows))
+        source_cols = sorted(set(source_cols))
+
+        return source_rows, source_cols
+
     def _get_selected_data(self, df: pl.DataFrame) -> tuple[pl.DataFrame, int, int, int, int]:
         """Get data subset based on row and column selections.
 
@@ -467,10 +496,23 @@ class PreViewData:
         self, df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
     ) -> Table:
         """Create a Rich table showing the actual data preview with unified adaptive layout."""
-        return self._create_adaptive_table(df, start_row, end_row, start_col, end_col)
+        # Get source indices if needed
+        if self.show_source_numbers:
+            source_rows, source_cols = self._get_source_indices()
+        else:
+            source_rows, source_cols = [], []
+
+        return self._create_adaptive_table(df, start_row, end_row, start_col, end_col, source_rows, source_cols)
 
     def _create_adaptive_table(
-        self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
+        self,
+        display_df: pl.DataFrame,
+        start_row: int,
+        end_row: int,
+        start_col: int,
+        end_col: int,
+        source_rows: list[int],
+        source_cols: list[int],
     ) -> Table:
         """Create an adaptive table that intelligently handles any number of columns.
 
@@ -505,15 +547,24 @@ class PreViewData:
 
         # If we can fit all columns in one table, do that
         if total_cols <= cols_per_section:
-            return self._create_single_table(display_df, title_text, col_width, start_col, start_row)
+            return self._create_single_table(
+                display_df, title_text, col_width, start_col, start_row, source_rows, source_cols
+            )
         else:
             # Create multiple sections
             return self._create_multi_section_table(
-                display_df, title_text, col_width, start_col, cols_per_section, start_row
+                display_df, title_text, col_width, start_col, cols_per_section, start_row, source_rows, source_cols
             )
 
     def _create_single_table(
-        self, display_df: pl.DataFrame, title: str, col_width: int, start_col: int, start_row: int
+        self,
+        display_df: pl.DataFrame,
+        title: str,
+        col_width: int,
+        start_col: int,
+        start_row: int,
+        source_rows: list[int],
+        source_cols: list[int],
     ) -> Table:
         """Create a single table for all columns."""
         table = Table(
@@ -534,15 +585,23 @@ class PreViewData:
             table.add_column(display_name, style="white", max_width=col_width, overflow="ellipsis")
 
         # Add column number row (with empty cell for row number column)
-        col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
+        if self.show_source_numbers and source_cols:
+            # Use original source column indices
+            col_numbers = [str(source_cols[i]) for i in range(len(display_df.columns))]
+        else:
+            # Use sequential indices starting from start_col
+            col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
         table.add_row("", *[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
 
         # Add data rows with row numbers
         max_cell_len = max(6, col_width - 2)
         for row_idx, row in enumerate(display_df.iter_rows()):
             formatted_row: list[str] = []
-            # Add row number as first column (using actual row index from start_row)
-            actual_row_num = start_row + row_idx
+            # Add row number as first column (using source indices if flag is set)
+            if self.show_source_numbers and source_rows:
+                actual_row_num = source_rows[row_idx] if row_idx < len(source_rows) else start_row + row_idx
+            else:
+                actual_row_num = start_row + row_idx
             formatted_row.append(f"[dim yellow]#{actual_row_num}[/dim yellow]")
 
             # Add data values
@@ -567,6 +626,8 @@ class PreViewData:
         start_col: int,
         cols_per_section: int,
         start_row: int,
+        source_rows: list[int],
+        source_cols: list[int],
     ) -> Table:
         """Create all sections and print them in correct order."""
         total_cols = len(display_df.columns)
@@ -582,8 +643,13 @@ class PreViewData:
                 f"🔍 Data Preview - Section {section_idx + 1}/{num_sections} "
                 f"(Cols {start_col + section_start}-{start_col + section_end - 1})"
             )
+            # Get source columns for this section if needed
+            section_source_cols = []
+            if self.show_source_numbers and source_cols:
+                section_source_cols = source_cols[section_start:section_end]
+
             section_table = self._create_single_table(
-                section_df, section_title, col_width, start_col + section_start, start_row
+                section_df, section_title, col_width, start_col + section_start, start_row, source_rows, section_source_cols
             )
 
             if section_idx > 0:

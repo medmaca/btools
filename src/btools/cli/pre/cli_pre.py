@@ -176,9 +176,34 @@ def select_data(
 @click.option("--output-info-file", "--oif", help="Filename to output detailed info to TOML file", default="fileinfo.toml")
 @click.option("--sep", "-s", help="Custom separator for CSV files")
 @click.option("--sheet", help="Sheet name or number for Excel files")
-@click.option("--dataset-overview", "--do", is_flag=True, default=False, help="Show dataset overview only")
-@click.option("--column-info", "--ci", is_flag=True, default=False, help="Show column information only")
-@click.option("--numeric-stats", "--ns", is_flag=True, default=False, help="Show numeric statistics only")
+@click.option(
+    "--dataset-overview",
+    "--do",
+    is_flag=True,
+    default=False,
+    help="Show dataset overview only",
+)
+@click.option(
+    "--column-info",
+    "--ci",
+    is_flag=True,
+    default=False,
+    help="Show column information only",
+)
+@click.option(
+    "--numeric-stats",
+    "--ns",
+    is_flag=True,
+    default=False,
+    help="Show numeric statistics only",
+)
+@click.option(
+    "--show-source-numbers",
+    "--snn",
+    is_flag=True,
+    default=False,
+    help="Show original source row/column numbers instead of subset positions",
+)
 def view_data(
     input_file: str,
     rows: str,
@@ -190,6 +215,7 @@ def view_data(
     dataset_overview: bool,
     column_info: bool,
     numeric_stats: bool,
+    show_source_numbers: bool,
 ):
     """View and profile datasets with beautiful terminal output.
 
@@ -197,36 +223,53 @@ def view_data(
     files. Uses Polars for fast data processing and Rich for beautiful terminal output
     with syntax highlighting and formatted tables.
 
-    By default, shows only the data preview with column numbers displayed in the first
-    row to help identify column positions.
+    By default, shows only the data preview with both row and column numbers displayed
+    to help identify data positions. Row numbers appear in the first column, and column
+    numbers appear in the first row of the table.
 
     Args:
-        input_file: Path to the input data file (CSV, Excel, TSV, etc.).
+        input_file: Path to the input data file (CSV, Excel, TSV, etc.). Supports
+            regular and gzip-compressed files.
         rows: Number of rows to display or range specification. Can be a number ("50"),
-            range ("10:60"), or multiple ranges ("1:10,50:60").
+            single range ("10:60"), or multiple ranges ("1:10,50:60"). All ranges
+            are zero-based and inclusive.
         cols: Number of columns to display or range specification. Can be a number ("25"),
-            range ("5:15"), or multiple ranges ("1:5,10:15").
-        output_info: If True, generates a detailed TOML report file.
-        output_info_file: Custom filename for TOML report output.
+            single range ("5:15"), or multiple ranges ("1:5,10:15"). All ranges
+            are zero-based and inclusive.
+        output_info: If True, generates a detailed TOML report file with comprehensive
+            dataset analysis including column statistics and data quality metrics.
+        output_info_file: Custom filename for TOML report output. Defaults to
+            "fileinfo.toml" in the same directory as input file.
         sep: Custom separator for CSV/delimited files (overrides auto-detection).
+            Common values include ",", ";", "\t", "|".
         sheet: Excel sheet name or number (0-based). If not specified, uses first sheet.
+            Can be sheet name string or numeric index.
         dataset_overview: If True, shows only dataset overview section (file info,
-            shape, memory usage).
+            shape, memory usage). Suppresses data preview when used.
         column_info: If True, shows only column information section (data types,
-            missing values, unique counts).
+            missing values, unique counts). Suppresses data preview when used.
         numeric_stats: If True, shows only numeric statistics section (mean, std,
-            min, max, quartiles).
+            min, max, quartiles). Suppresses data preview when used.
+        show_source_numbers: If True, shows original source row/column numbers instead
+            of sequential subset positions. Useful for referencing back to original
+            dataset positions when working with subsets.
 
     Raises:
-        click.Abort: If file processing fails or invalid parameters are provided.
+        click.Abort: If file processing fails, file doesn't exist, invalid parameters
+            are provided, or unsupported file format is encountered.
 
     Note:
-        Analysis section flags (--dataset-overview, --column-info, --numeric-stats)
-        can be combined to show multiple sections. When any of these flags are used,
-        the default data preview is suppressed.
+        - Analysis section flags (--dataset-overview, --column-info, --numeric-stats)
+          can be combined to show multiple sections. When any of these flags are used,
+          the default data preview is suppressed.
+        - Row and column numbering uses zero-based indexing consistent with most
+          programming languages and data processing tools.
+        - The adaptive display automatically handles varying numbers of columns by
+          using single tables for few columns and multi-section display for many columns.
+        - All file formats are auto-detected unless custom separator is specified.
 
     Examples:
-        Basic usage - show data preview with column numbers:
+        Basic usage - show data preview with row/column numbers:
             $ btools pre view data.csv
 
         Show specific range of rows and columns:
@@ -234,6 +277,9 @@ def view_data(
 
         Show multiple ranges of rows and columns:
             $ btools pre view data.csv --rows "1:10,50:60" --cols "1:5,10:15"
+
+        Show original source positions instead of subset positions:
+            $ btools pre view data.csv --rows "1:3,7:9" --cols "0:2,5:7" --snn
 
         Show only dataset overview:
             $ btools pre view data.csv --dataset-overview
@@ -252,6 +298,9 @@ def view_data(
 
         Custom separator with data preview:
             $ btools pre view data.txt --sep "|" --rows 10 --cols 5
+
+        Gzipped file with range selection:
+            $ btools pre view data.csv.gz --rows "0:100" --cols "0:10"
     """
     try:
         output_info_path: str | None = None
@@ -268,6 +317,7 @@ def view_data(
             show_dataset_overview=dataset_overview,
             show_column_info=column_info,
             show_numeric_stats=numeric_stats,
+            show_source_numbers=show_source_numbers,
         )
         viewer.view()
     except Exception as e:
