@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Script for quickly viewing and profiling datasets using Polars."""
+"""Script for quickly viewing and profiling datasets using Polars with enhanced syntax support.
+
+This module provides functionality to quickly explore and profile datasets with:
+- Multi-range row and column selection with colon syntax (e.g., "1:5,10:15")
+- Configurable lazy vs eager loading for performance optimization
+- Rich terminal output with beautiful formatting
+- Optional detailed analysis and TOML output
+- Original display layout and behavior restored
+
+Supports CSV, TSV, Excel files (including gzipped files where applicable).
+Uses Polars for high-performance data operations.
+"""
 
 import contextlib
 import os
@@ -7,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-import tomli_w
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
@@ -24,6 +34,25 @@ package_dir = Path(__file__).parent.parent.parent.parent
 load_dotenv(dotenv_path=package_dir / ".env", override=False)  # Package defaults
 load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)  # Current directory
 load_dotenv(dotenv_path=Path.home() / ".env", override=True)  # User home directory (highest priority)
+
+# Environment variable to enable test conditions
+LOAD_ENV = os.getenv("BTOOLS_TEST_ENV") == "true"
+
+
+def _apply_environment_conditions(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply test environment conditions if enabled.
+
+    Args:
+        df: Input DataFrame
+
+    Returns:
+        DataFrame with test conditions applied (if enabled)
+    """
+    if not LOAD_ENV:
+        return df
+
+    # Add test environment modifications here if needed
+    return df
 
 
 def _get_true_file_extension(file_path: Path) -> str:
@@ -51,65 +80,119 @@ def _get_true_file_extension(file_path: Path) -> str:
 
 
 def _is_gzipped(file_path: Path) -> bool:
-    """Check if a file is gzip compressed.
+    """Check if a file is gzip-compressed by examining the file extension.
 
     Args:
-        file_path: Path to the file
+        file_path: Path to the file to check
 
     Returns:
-        True if the file is gzip compressed
+        True if the file appears to be gzip-compressed, False otherwise
     """
-    return file_path.suffix.lower() == ".gz"
+    return str(file_path).endswith(".gz")
+
+
+def _parse_multi_range_parameter(param: int | str, param_name: str) -> list[tuple[int, int]]:
+    """Parse multi-range parameter into list of (start, end) tuples.
+
+    Supports:
+    - Single number: 10 -> [(0, 9)]
+    - Single range: "5:15" -> [(5, 15)]
+    - Multiple ranges: "1:5,10:15" -> [(1, 5), (10, 15)]
+
+    Args:
+        param: Parameter value (int or str)
+        param_name: Parameter name for error messages
+
+    Returns:
+        List of (start, end) tuples (both inclusive)
+
+    Raises:
+        ValueError: If the parameter format is invalid
+    """
+    if isinstance(param, int):
+        return [(0, param - 1)]
+
+    # param is str
+    try:
+        ranges: list[tuple[int, int]] = []
+        # Split by comma to get individual range specifications
+        range_specs = [spec.strip() for spec in param.split(",")]
+
+        for spec in range_specs:
+            if ":" in spec:
+                # Range format "start:end"
+                parts = [p.strip() for p in spec.split(":")]
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid {param_name} range format '{spec}'. Use 'start:end' format")
+                start, end = int(parts[0]), int(parts[1])
+                if start > end:
+                    raise ValueError(f"Invalid {param_name} range '{spec}': start must be <= end")
+                ranges.append((start, end))
+            else:
+                # Single number - if it's the only spec, treat as count from beginning
+                # If it's one of multiple specs, treat as individual index
+                num = int(spec)
+                if len(range_specs) == 1:
+                    # Single spec, treat as count from beginning
+                    ranges.append((0, num - 1))
+                else:
+                    # Multiple specs, treat as individual index
+                    ranges.append((num, num))
+
+        return ranges
+    except ValueError as e:
+        if "invalid literal" in str(e):
+            raise ValueError(
+                f"Invalid {param_name} format '{param}'. Use integer, 'start:end', or 'start1:end1,start2:end2' format"
+            ) from e
+        raise
 
 
 class ViewConfig:
-    """Configuration class for pre_view display modes."""
+    """Configuration settings for unified adaptive display mode."""
 
     def __init__(self):
-        """Initialize configuration from environment variables."""
-        # Auto mode thresholds
-        self.auto_normal_max_cols = int(os.getenv("VIEW_AUTO_NORMAL_MAX_COLS", "5"))
-        self.auto_rotated_max_cols = int(os.getenv("VIEW_AUTO_ROTATED_MAX_COLS", "10"))
+        """Initialize view configuration with minimal environment variables."""
+        # Performance settings
+        self.use_lazy_loading = os.getenv("VIEW_LAZY_LOAD", "False").lower() == "true"
 
-        # Normal mode settings
-        self.normal_max_col_width = int(os.getenv("VIEW_NORMAL_MAX_COL_WIDTH", "20"))
-        self.normal_max_cell_length = int(os.getenv("VIEW_NORMAL_MAX_CELL_LENGTH", "18"))
+        # Unified display settings (single adaptive mode) - with error handling
+        try:
+            self.cols_per_section = int(os.getenv("VIEW_COLS_PER_SECTION", "12"))
+        except ValueError:
+            self.cols_per_section = 12
 
-        # Rotated headers mode settings
-        self.rotated_max_col_width = int(os.getenv("VIEW_ROTATED_MAX_COL_WIDTH", "12"))
-        self.rotated_max_cell_length = int(os.getenv("VIEW_ROTATED_MAX_CELL_LENGTH", "10"))
-        self.rotated_header_max_length = int(os.getenv("VIEW_ROTATED_HEADER_MAX_LENGTH", "8"))
+        try:
+            self.max_col_width = int(os.getenv("VIEW_MAX_COL_WIDTH", "20"))
+        except ValueError:
+            self.max_col_width = 20
 
-        # Wrapped mode settings
-        self.wrapped_cols_per_section = int(os.getenv("VIEW_WRAPPED_COLS_PER_SECTION", "5"))
-        self.wrapped_max_col_width = int(os.getenv("VIEW_WRAPPED_MAX_COL_WIDTH", "15"))
-        self.wrapped_max_cell_length = int(os.getenv("VIEW_WRAPPED_MAX_CELL_LENGTH", "13"))
+        self.ellipsis = os.getenv("VIEW_ELLIPSIS", "...")
 
-        # General display settings
-        self.default_rows = int(os.getenv("VIEW_DEFAULT_ROWS", "10"))
-        self.max_rows = int(os.getenv("VIEW_MAX_ROWS", "1000"))
-        self.ellipsis_string = os.getenv("VIEW_ELLIPSIS_STRING", "...")
-        self.null_display_style = os.getenv("VIEW_NULL_DISPLAY_STYLE", "dim red")
+        # Output settings
+        try:
+            self.out_unique_max = int(os.getenv("VIEW_OUT_UNIQUE_MAX", "20"))
+        except ValueError:
+            self.out_unique_max = 20
 
-        # TOML output settings
-        self.out_unique_max = int(os.getenv("VIEW_OUT_UNIQUE_MAX", "20"))
+        # Display style (fixed, no need for env var)
+        self.null_display_style = "dim red"
 
 
 class PreViewData:
-    """Class for quickly viewing and profiling datasets using Polars.
+    """Class for viewing and profiling datasets using Polars with unified adaptive display.
 
-    This class provides functionality to quickly explore datasets with:
-    - Configurable row display (single number or range)
-    - Data type analysis
-    - Missing value analysis
-    - Basic statistics
-    - Optional detailed output file
+    This class provides functionality to explore datasets with:
+    - Multi-range row and column selection (e.g., "1:5,10:15")
+    - Configurable lazy vs eager loading
+    - Unified adaptive display that handles any number of columns
+    - Optional detailed analysis and TOML output
     """
 
     def __init__(
         self,
         input_file: str,
-        rows: int | str = 50,
+        rows: int | str = 10,
         cols: int | str = 25,
         output_info: str | None = None,
         sep: str | None = None,
@@ -117,23 +200,19 @@ class PreViewData:
         show_dataset_overview: bool = False,
         show_column_info: bool = False,
         show_numeric_stats: bool = False,
-        display_mode: str = "auto",
     ):
-        """Initialize the PreViewData class.
+        """Initialize PreViewData with unified adaptive display.
 
         Args:
-            input_file: Path to the input data file
-            rows: Number of rows to display. Can be single integer (e.g., 50) or
-                 range string (e.g., "50,100") to display rows 50-100 (default: 50)
-            cols: Number of columns to display. Can be single integer (e.g., 25) or
-                 range string (e.g., "5,15") to display columns 5-15 (default: 25)
-            output_info: Path to output detailed info file (TOML format)
-            sep: Separator/delimiter to use when reading the file (default: None, auto-detect)
-            sheet: Sheet name or number to read from Excel files (default: None, uses first sheet)
-            show_dataset_overview: Whether to show dataset overview only (default: False)
-            show_column_info: Whether to show column information only (default: False)
-            show_numeric_stats: Whether to show numeric statistics only (default: False)
-            display_mode: Display mode for data preview. Options: "auto", "normal", "rotated", "wrapped" (default: "auto")
+            input_file: Path to the input file
+            rows: Row specification - number, range ("10:60"), or multiple ranges ("1:10,50:60")
+            cols: Column specification - number, range ("5:15"), or multiple ranges ("1:5,10:15")
+            output_info: Path for detailed TOML output file
+            sep: Custom separator for CSV files
+            sheet: Sheet name or number for Excel files
+            show_dataset_overview: Show only dataset overview section
+            show_column_info: Show only column information section
+            show_numeric_stats: Show only numeric statistics section
         """
         self.input_file = Path(input_file)
         self.rows = rows
@@ -144,78 +223,15 @@ class PreViewData:
         self.show_dataset_overview = show_dataset_overview
         self.show_column_info = show_column_info
         self.show_numeric_stats = show_numeric_stats
-        self.display_mode = display_mode
+
+        # Initialize console and config
         self.console = Console()
         self.config = ViewConfig()
-
-    def _parse_rows_parameter(self) -> tuple[int, int | None]:
-        """Parse rows parameter into start and end positions.
-
-        Returns:
-            Tuple of (start, end) where end is None if only start is specified
-
-        Raises:
-            ValueError: If the parameter format is invalid
-        """
-        if isinstance(self.rows, int):
-            return (0, self.rows)
-
-        # self.rows is str
-        try:
-            if "," in self.rows:
-                parts = [p.strip() for p in self.rows.split(",")]
-                if len(parts) != 2:
-                    raise ValueError(f"Invalid rows range format '{self.rows}'. Use 'start,end' format")
-                start, end = int(parts[0]), int(parts[1])
-                if start > end:
-                    raise ValueError(f"Invalid rows range '{self.rows}': start must be <= end")
-                return (start, end)
-            else:
-                return (0, int(self.rows))
-        except ValueError as e:
-            if "invalid literal" in str(e):
-                raise ValueError(f"Invalid rows format '{self.rows}'. Use integer or 'start,end' format") from e
-            raise
-
-    def _parse_cols_parameter(self) -> tuple[int, int | None]:
-        """Parse cols parameter into start and end positions.
-
-        Returns:
-            Tuple of (start, end) where end is None if only start is specified
-
-        Raises:
-            ValueError: If the parameter format is invalid
-        """
-        if isinstance(self.cols, int):
-            return (0, self.cols)
-
-        # self.cols is str
-        try:
-            if "," in self.cols:
-                parts = [p.strip() for p in self.cols.split(",")]
-                if len(parts) != 2:
-                    raise ValueError(f"Invalid cols range format '{self.cols}'. Use 'start,end' format")
-                start, end = int(parts[0]), int(parts[1])
-                if start > end:
-                    raise ValueError(f"Invalid cols range '{self.cols}': start must be <= end")
-                return (start, end)
-            else:
-                return (0, int(self.cols))
-        except ValueError as e:
-            if "invalid literal" in str(e):
-                raise ValueError(f"Invalid cols format '{self.cols}'. Use integer or 'start,end' format") from e
-            raise
 
     def _read_data(self) -> pl.DataFrame:
         """Read data from the input file using Polars.
 
-        Supports multiple file formats:
-        - CSV files (.csv, .csv.gz): Uses polars.read_csv with auto-detected or custom separator
-        - Excel files (.xlsx, .xls): Uses polars.read_excel (note: .gz not supported for Excel)
-        - TSV files (.tsv, .tsv.gz): Uses polars.read_csv with tab separator
-        - Other formats: Defaults to CSV format
-
-        Automatically handles gzip-compressed files by detecting .gz extension.
+        Uses lazy or eager loading based on VIEW_LAZY_LOAD environment variable.
 
         Returns:
             Polars DataFrame containing the input data
@@ -228,46 +244,54 @@ class PreViewData:
             raise FileNotFoundError(f"Input file not found: {self.input_file}")
 
         try:
-            df: pl.DataFrame
             is_gzipped = _is_gzipped(self.input_file)
             true_extension = _get_true_file_extension(self.input_file)
 
-            # If a custom separator is provided, use it for CSV-like files
+            # Custom separator handling
             if self.sep is not None:
                 if self.sep == "\\t":
-                    self.console.print(f"[dim]Reading {'gzipped ' if is_gzipped else ''}TSV file: {self.input_file}[/dim]")
-                    df = pl.read_csv(self.input_file, separator="\t")
-                else:
-                    prefix = "gzipped " if is_gzipped else ""
-                    self.console.print(f"[dim]Reading {prefix}file with custom separator: {repr(self.sep)}[/dim]")
-                    df = pl.read_csv(self.input_file, separator=self.sep)
-            else:
-                # Auto-detect format based on true extension (ignoring .gz)
-                if true_extension == ".csv":
-                    df = pl.read_csv(self.input_file)
-                elif true_extension in [".xlsx", ".xls"]:
-                    if is_gzipped:
-                        raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
-
-                    if self.sheet is not None:
-                        self.console.print(f"[dim]Reading Excel file: {self.input_file}, sheet: {self.sheet}[/dim]")
-                        df = pl.read_excel(self.input_file, sheet_name=self.sheet)
+                    if self.config.use_lazy_loading:
+                        return pl.scan_csv(self.input_file, separator="\t").collect()
                     else:
-                        self.console.print(f"[dim]Reading Excel file: {self.input_file}[/dim]")
-                        df = pl.read_excel(self.input_file)
-                elif true_extension == ".tsv":
-                    df = pl.read_csv(self.input_file, separator="\t")
+                        return pl.read_csv(self.input_file, separator="\t")
                 else:
-                    # Default to CSV format for unknown extensions
-                    df = pl.read_csv(self.input_file)
+                    if self.config.use_lazy_loading:
+                        return pl.scan_csv(self.input_file, separator=self.sep).collect()
+                    else:
+                        return pl.read_csv(self.input_file, separator=self.sep)
 
-            return df
+            # Auto-detect format based on true extension
+            if true_extension == ".csv":
+                if self.config.use_lazy_loading:
+                    return pl.scan_csv(self.input_file).collect()
+                else:
+                    return pl.read_csv(self.input_file)
+            elif true_extension in [".xlsx", ".xls"]:
+                if is_gzipped:
+                    raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
+
+                # Excel files must be read eagerly
+                if self.sheet is not None:
+                    return pl.read_excel(self.input_file, sheet_name=self.sheet)
+                else:
+                    return pl.read_excel(self.input_file)
+            elif true_extension == ".tsv":
+                if self.config.use_lazy_loading:
+                    return pl.scan_csv(self.input_file, separator="\t").collect()
+                else:
+                    return pl.read_csv(self.input_file, separator="\t")
+            else:
+                # Default to CSV format
+                if self.config.use_lazy_loading:
+                    return pl.scan_csv(self.input_file).collect()
+                else:
+                    return pl.read_csv(self.input_file)
 
         except Exception as e:
             raise OSError(f"Error reading file {self.input_file}: {str(e)}") from e
 
     def _create_data_overview_table(self, df: pl.DataFrame) -> Table:
-        """Create a Rich table with basic dataset overview."""
+        """Create a Rich table with basic dataset overview (original layout)."""
         table = Table(title="📊 Dataset Overview", show_header=True, header_style="bold magenta")
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
@@ -288,7 +312,7 @@ class PreViewData:
         return table
 
     def _create_column_info_table(self, df: pl.DataFrame) -> Table:
-        """Create a Rich table with column information."""
+        """Create a Rich table with column information (original layout)."""
         table = Table(title="📋 Column Information", show_header=True, header_style="bold green")
         table.add_column("Column", style="cyan", no_wrap=True)
         table.add_column("Type", style="yellow")
@@ -326,7 +350,7 @@ class PreViewData:
         return table
 
     def _create_statistics_table(self, df: pl.DataFrame) -> Table:
-        """Create a Rich table with basic statistics for numeric columns."""
+        """Create a Rich table with basic statistics for numeric columns (original layout)."""
         table = Table(title="📈 Numeric Statistics", show_header=True, header_style="bold blue")
         table.add_column("Column", style="cyan", no_wrap=True)
         table.add_column("Mean", style="white")
@@ -389,206 +413,175 @@ class PreViewData:
 
         return table
 
+    def _get_selected_data(self, df: pl.DataFrame) -> tuple[pl.DataFrame, int, int, int, int]:
+        """Get data subset based on row and column selections.
+
+        Args:
+            df: Input DataFrame
+
+        Returns:
+            Tuple of (selected_df, start_row, end_row, start_col, end_col)
+        """
+        # Parse row and column ranges
+        row_ranges = _parse_multi_range_parameter(self.rows, "rows")
+        col_ranges = _parse_multi_range_parameter(self.cols, "cols")
+
+        # Collect all selected row indices
+        selected_rows: list[int] = []
+        for start, end in row_ranges:
+            selected_rows.extend(range(start, min(end + 1, df.height)))
+
+        # Collect all selected column indices
+        selected_cols: list[int] = []
+        for start, end in col_ranges:
+            selected_cols.extend(range(start, min(end + 1, df.width)))
+
+        # Remove duplicates and sort
+        selected_rows = sorted(set(selected_rows))
+        selected_cols = sorted(set(selected_cols))
+
+        # Get actual start/end for display purposes
+        start_row = selected_rows[0] if selected_rows else 0
+        end_row = selected_rows[-1] if selected_rows else 0
+        start_col = selected_cols[0] if selected_cols else 0
+        end_col = selected_cols[-1] if selected_cols else 0
+
+        # Create subset DataFrame
+        if selected_rows and selected_cols:
+            # Select rows first
+            row_subset = df.slice(0, 0)  # Empty DataFrame with same schema
+            for row_idx in selected_rows:
+                if row_idx < df.height:
+                    row_subset = pl.concat([row_subset, df.slice(row_idx, 1)])
+
+            # Then select columns
+            column_names = df.columns
+            valid_col_names = [column_names[i] for i in selected_cols if i < len(column_names)]
+            subset_df = row_subset.select(valid_col_names) if valid_col_names else row_subset
+        else:
+            subset_df = df
+
+        return subset_df, start_row, end_row, start_col, end_col
+
     def _create_data_preview_table(
         self, df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
     ) -> Table:
-        """Create a Rich table showing the actual data preview with adaptive layout."""
-        # Select row subset
-        display_df = df.slice(start_row, end_row - start_row)
+        """Create a Rich table showing the actual data preview with unified adaptive layout."""
+        return self._create_adaptive_table(df, start_row, end_row, start_col, end_col)
 
-        # Select column subset
-        all_columns = display_df.columns
-        if start_col >= len(all_columns):
-            raise ValueError(f"start_col ({start_col}) is out of bounds. DataFrame has {len(all_columns)} columns.")
-
-        end_col = min(end_col, len(all_columns))
-        selected_columns = all_columns[start_col:end_col]
-        display_df = display_df.select(selected_columns)
-
-        num_cols = len(selected_columns)
-
-        # Determine display mode
-        if self.display_mode == "auto":
-            # Adaptive display based on number of columns using config values
-            if num_cols <= self.config.auto_normal_max_cols:
-                return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
-            elif num_cols <= self.config.auto_rotated_max_cols:
-                return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
-            else:
-                return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
-        elif self.display_mode == "normal":
-            return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
-        elif self.display_mode == "rotated":
-            return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
-        elif self.display_mode == "wrapped":
-            return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
-        else:
-            # Default to auto mode for unknown display modes
-            if num_cols <= 5:
-                return self._create_standard_table(display_df, start_row, end_row, start_col, end_col)
-            elif num_cols <= 10:
-                return self._create_rotated_header_table(display_df, start_row, end_row, start_col, end_col)
-            else:
-                return self._create_wrapped_table(display_df, start_row, end_row, start_col, end_col)
-
-    def _create_standard_table(
+    def _create_adaptive_table(
         self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
     ) -> Table:
-        """Create a standard horizontal table for small number of columns."""
-        title_text = (
-            f"🔍 Data Preview (Rows {start_row}-"
-            f"{min(end_row - 1, start_row + display_df.height - 1)}, "
-            f"Cols {start_col}-{end_col - 1})"
-        )
-        table = Table(
-            title=title_text,
-            show_header=True,
-            header_style="bold cyan",
-        )
+        """Create an adaptive table that intelligently handles any number of columns.
 
-        # Add columns with normal headers
-        for col_name in display_df.columns:
-            table.add_column(col_name, style="white", max_width=self.config.normal_max_col_width, overflow="ellipsis")
-
-        # Add column number row
-        col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
-        table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
-
-        # Add rows
-        for row in display_df.iter_rows():
-            formatted_row: list[str] = []
-            for val in row:
-                if val is None:
-                    formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
-                else:
-                    str_val = str(val)
-                    if len(str_val) > self.config.normal_max_cell_length:
-                        truncate_len = self.config.normal_max_cell_length - len(self.config.ellipsis_string)
-                        str_val = str_val[:truncate_len] + self.config.ellipsis_string
-                    formatted_row.append(str_val)
-            table.add_row(*formatted_row)
-
-        return table
-
-    def _create_rotated_header_table(
-        self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
-    ) -> Table:
-        """Create a table with rotated column headers for medium number of columns."""
-        title_text = (
-            f"🔍 Data Preview (Rows {start_row}-"
-            f"{min(end_row - 1, start_row + display_df.height - 1)}, "
-            f"Cols {start_col}-{end_col - 1}) [Rotated Headers]"
-        )
-        table = Table(
-            title=title_text,
-            show_header=True,
-            header_style="bold cyan",
-        )
-
-        # Add columns with rotated headers (using vertical text approximation)
-        for col_name in display_df.columns:
-            # Create a vertical-style header by putting each character on a new "line" using spaces
-            max_header_len = self.config.rotated_header_max_length
-            rotated_header = (
-                col_name[: max_header_len - len(self.config.ellipsis_string[:2])] + self.config.ellipsis_string[:2]
-                if len(col_name) > max_header_len
-                else col_name
-            )
-
-            table.add_column(
-                rotated_header,
-                style="white",
-                max_width=self.config.rotated_max_col_width,
-                overflow="ellipsis",
-                justify="center",
-            )
-
-        # Add column number row
-        col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
-        table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
-
-        # Add rows
-        for row in display_df.iter_rows():
-            formatted_row: list[str] = []
-            for val in row:
-                if val is None:
-                    formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
-                else:
-                    str_val = str(val)
-                    if len(str_val) > self.config.rotated_max_cell_length:
-                        truncate_len = self.config.rotated_max_cell_length - len(self.config.ellipsis_string[:2])
-                        str_val = str_val[:truncate_len] + self.config.ellipsis_string[:2]
-                    formatted_row.append(str_val)
-            table.add_row(*formatted_row)
-
-        return table
-
-    def _create_wrapped_table(
-        self, display_df: pl.DataFrame, start_row: int, end_row: int, start_col: int, end_col: int
-    ) -> Table:
-        """Create multiple tables wrapping columns across sections."""
-        tables: list[Table] = []
-        cols_per_section = self.config.wrapped_cols_per_section
+        This unified approach:
+        - Few columns: Shows them with full width (like normal mode)
+        - Many columns: Uses condensed width to fit more
+        - Too many columns: Shows in multiple sections
+        """
         total_cols = len(display_df.columns)
+        cols_per_section = self.config.cols_per_section
 
-        for section_start in range(0, total_cols, cols_per_section):
-            section_end = min(section_start + cols_per_section, total_cols)
-            section_columns = display_df.columns[section_start:section_end]
-            section_df = display_df.select(section_columns)
+        # Calculate optimal column width based on number of columns
+        if total_cols <= 6:
+            # Few columns - use full width
+            col_width = self.config.max_col_width
+            title_suffix = ""
+        elif total_cols <= cols_per_section:
+            # Medium number - use reasonable condensed width (but respect user setting)
+            col_width = max(12, min(self.config.max_col_width, self.config.max_col_width // 2 + 8))
+            title_suffix = " [Condensed]"
+        else:
+            # Many columns - use user's setting (they know what they want)
+            col_width = self.config.max_col_width
+            title_suffix = f" [Showing all {total_cols} columns]"
 
-            table = Table(
-                title=f"Cols {start_col + section_start}-{start_col + section_end - 1}",
-                show_header=True,
-                header_style="bold cyan",
-                title_style="bold blue",
-            )
-
-            # Add columns for this section
-            for col_name in section_df.columns:
-                table.add_column(col_name, style="white", max_width=self.config.wrapped_max_col_width, overflow="ellipsis")
-
-            # Add column number row
-            section_col_numbers = [str(start_col + section_start + i) for i in range(len(section_df.columns))]
-            table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in section_col_numbers])
-
-            # Add rows for this section
-            for row in section_df.iter_rows():
-                formatted_row: list[str] = []
-                for val in row:
-                    if val is None:
-                        formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
-                    else:
-                        str_val = str(val)
-                        if len(str_val) > self.config.wrapped_max_cell_length:
-                            truncate_len = self.config.wrapped_max_cell_length - len(self.config.ellipsis_string)
-                            str_val = str_val[:truncate_len] + self.config.ellipsis_string
-                        formatted_row.append(str_val)
-                table.add_row(*formatted_row)
-
-            tables.append(table)
-
-        # Create a combined display
-        main_table = Table.grid()
-        main_table.add_column()
-
-        # Add title
+        # Create the main table
         title_text = (
-            f"[bold cyan]🔍 Data Preview (Rows {start_row}-"
-            f"{min(end_row - 1, start_row + display_df.height - 1)}, "
-            f"Cols {start_col}-{end_col - 1}) [Wrapped Layout][/bold cyan]"
+            f"🔍 Data Preview (Rows {start_row}-"
+            f"{min(end_row, start_row + display_df.height - 1)}, "
+            f"Cols {start_col}-{end_col}){title_suffix}"
         )
-        main_table.add_row(title_text)
 
-        # Add each table section
-        for i, table in enumerate(tables):
-            if i > 0:
-                main_table.add_row("")  # Add spacing between sections
-            main_table.add_row(table)
+        # If we can fit all columns in one table, do that
+        if total_cols <= cols_per_section:
+            return self._create_single_table(display_df, title_text, col_width, start_col)
+        else:
+            # Create multiple sections
+            return self._create_multi_section_table(display_df, title_text, col_width, start_col, cols_per_section)
 
-        return main_table
+    def _create_single_table(self, display_df: pl.DataFrame, title: str, col_width: int, start_col: int) -> Table:
+        """Create a single table for all columns."""
+        table = Table(
+            title=title,
+            show_header=True,
+            header_style="bold cyan",
+        )
+
+        # Add all columns
+        for col_name in display_df.columns:
+            # Truncate column name if needed for narrow columns
+            display_name = (
+                col_name[: col_width - 5] + "..." if col_width < 15 and len(col_name) > col_width - 2 else col_name
+            )
+            table.add_column(display_name, style="white", max_width=col_width, overflow="ellipsis")
+
+        # Add column number row
+        col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
+        table.add_row(*[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
+
+        # Add data rows
+        max_cell_len = max(6, col_width - 2)
+        for row in display_df.iter_rows():
+            formatted_row: list[str] = []
+            for val in row:
+                if val is None:
+                    formatted_row.append(f"[{self.config.null_display_style}]null[/{self.config.null_display_style}]")
+                else:
+                    str_val = str(val)
+                    if len(str_val) > max_cell_len:
+                        truncate_len = max_cell_len - len(self.config.ellipsis)
+                        str_val = str_val[:truncate_len] + self.config.ellipsis
+                    formatted_row.append(str_val)
+            table.add_row(*formatted_row)
+
+        return table
+
+    def _create_multi_section_table(
+        self, display_df: pl.DataFrame, base_title: str, col_width: int, start_col: int, cols_per_section: int
+    ) -> Table:
+        """Create all sections and print them in correct order."""
+        total_cols = len(display_df.columns)
+        num_sections = (total_cols + cols_per_section - 1) // cols_per_section
+
+        # Print all sections in correct order (1, 2, 3, ...)
+        for section_idx in range(num_sections):
+            section_start = section_idx * cols_per_section
+            section_end = min(section_start + cols_per_section, total_cols)
+            section_df = display_df.select(display_df.columns[section_start:section_end])
+
+            section_title = (
+                f"🔍 Data Preview - Section {section_idx + 1}/{num_sections} "
+                f"(Cols {start_col + section_start}-{start_col + section_end - 1})"
+            )
+            section_table = self._create_single_table(section_df, section_title, col_width, start_col + section_start)
+
+            if section_idx > 0:
+                self.console.print("\n")
+            self.console.print(section_table)
+
+        # Return a summary table as the "main" result
+        summary_table = Table(title=f"📊 Summary: {total_cols} columns shown in {num_sections} sections")
+        summary_table.add_column("Info", style="cyan")
+        summary_table.add_column("Value", style="white")
+        summary_table.add_row("Total Columns", str(total_cols))
+        summary_table.add_row("Sections", str(num_sections))
+        summary_table.add_row("Columns per Section", str(cols_per_section))
+
+        return summary_table
 
     def _generate_detailed_info(self, df: pl.DataFrame) -> dict[str, Any]:
-        """Generate detailed information about the dataset for file output."""
+        """Generate detailed information about the dataset for file output (original format)."""
         info: dict[str, Any] = {
             "file_info": {
                 "file_path": str(self.input_file),
@@ -702,35 +695,19 @@ class PreViewData:
             return data
 
     def view(self) -> None:
-        """Main method to view and analyze the dataset."""
+        """Main method to view and analyze the dataset (original behavior restored)."""
         self.console.print(f"\n[bold green]📁 Loading dataset: {self.input_file.name}[/bold green]")
-
         # Read the data
         df = self._read_data()
 
-        # Parse row parameters
-        start_row, end_row = self._parse_rows_parameter()
-        if end_row is None:
-            end_row = min(start_row + 50, df.height)  # Default to showing 50 rows from start
+        # Apply optional environment conditions
+        if LOAD_ENV:
+            df = _apply_environment_conditions(df)
 
-        # Parse column parameters
-        start_col, end_col = self._parse_cols_parameter()
-        if end_col is None:
-            end_col = min(start_col + 25, df.width)  # Default to showing 25 columns from start
+        # Get selected data subset
+        display_df, start_row, end_row, start_col, end_col = self._get_selected_data(df)
 
-        # Validate row range
-        if start_row >= df.height:
-            raise ValueError(f"start_row ({start_row}) is out of bounds. DataFrame has {df.height} rows.")
-        if end_row > df.height:
-            end_row = df.height
-
-        # Validate column range
-        if start_col >= df.width:
-            raise ValueError(f"start_col ({start_col}) is out of bounds. DataFrame has {df.width} columns.")
-        if end_col > df.width:
-            end_col = df.width
-
-        # Determine what to show based on flags
+        # Determine what to show based on flags (original logic)
         show_any_section = self.show_dataset_overview or self.show_column_info or self.show_numeric_stats
 
         if show_any_section:
@@ -748,7 +725,7 @@ class PreViewData:
                 self.console.print("\n", stats_table)
         else:
             # Default: show only data preview
-            preview_table = self._create_data_preview_table(df, start_row, end_row, start_col, end_col)
+            preview_table = self._create_data_preview_table(display_df, start_row, end_row, start_col, end_col)
             self.console.print("\n", preview_table)
 
         # Generate detailed info file if requested
@@ -757,31 +734,18 @@ class PreViewData:
             detailed_info = self._generate_detailed_info(df)
             cleaned_info = self._clean_for_toml(detailed_info)
 
-            with open(self.output_info, "wb") as f:
-                tomli_w.dump(cleaned_info, f)
+            try:
+                import tomli_w
 
-            self.console.print(f"[green]✓[/green] Detailed info saved to: {self.output_info}")
-
-        self.console.print("\n[bold green]✅ Analysis complete![/bold green]")
-
-    def get_info(self) -> dict[str, Any]:
-        """Get information about the view configuration.
-
-        Returns:
-            Dictionary containing the current configuration
-        """
-        return {
-            "input_file": str(self.input_file),
-            "rows": self.rows,
-            "cols": self.cols,
-            "output_info": str(self.output_info) if self.output_info else None,
-            "sep": self.sep,
-            "sheet": self.sheet,
-            "show_dataset_overview": self.show_dataset_overview,
-            "show_column_info": self.show_column_info,
-            "show_numeric_stats": self.show_numeric_stats,
-            "display_mode": self.display_mode,
-        }
+                with open(self.output_info, "wb") as f:
+                    tomli_w.dump(cleaned_info, f)
+                self.console.print(f"[green]✓ Detailed info written to: {self.output_info}[/green]")
+            except ImportError:
+                self.console.print(
+                    "[yellow]Warning: tomli_w not available. Install with 'pip install tomli_w' for TOML output.[/yellow]"
+                )
+            except Exception as e:
+                self.console.print(f"[red]Error writing output file: {str(e)}[/red]")
 
 
 def main():
@@ -789,45 +753,43 @@ def main():
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(description="Quickly view and profile datasets")
+    parser = argparse.ArgumentParser(description="View and profile datasets with enhanced syntax support")
     parser.add_argument("input_file", help="Path to the input data file")
-    parser.add_argument("--rows", "-r", default=50, help="Number of rows to display or range (e.g., '50' or '10,60')")
-    parser.add_argument("--cols", "-c", default=25, help="Number of columns to display or range (e.g., '25' or '5,15')")
-    parser.add_argument("--output-info", "--oi", help="Output detailed info to TOML file")
-    parser.add_argument("--sep", help="Custom separator for CSV files")
+    parser.add_argument("--rows", "-r", default=10, help="Number of rows or range (e.g., '10' or '10:60' or '1:5,10:15')")
+    parser.add_argument("--cols", "-c", default=25, help="Number of columns or range (e.g., '25' or '5:15' or '1:3,8:12')")
+    parser.add_argument("--output-info", "-o", help="Path to output detailed info file (TOML format)")
+    parser.add_argument("--sep", "-s", help="Separator/delimiter for CSV files")
     parser.add_argument("--sheet", help="Sheet name or number for Excel files")
-    parser.add_argument(
-        "--display-mode",
-        choices=["auto", "normal", "rotated", "wrapped"],
-        default="auto",
-        help="Display mode for data preview (default: auto)",
-    )
-
-    # New display section flags
-    parser.add_argument("--dataset-overview", "--do", action="store_true", help="Show dataset overview only")
-    parser.add_argument("--column-info", "--ci", action="store_true", help="Show column information only")
-    parser.add_argument("--numeric-stats", "--ns", action="store_true", help="Show numeric statistics only")
+    parser.add_argument("--dataset-overview", action="store_true", help="Show only dataset overview")
+    parser.add_argument("--column-info", action="store_true", help="Show only column information")
+    parser.add_argument("--numeric-stats", action="store_true", help="Show only numeric statistics")
 
     args = parser.parse_args()
+
+    # Convert string arguments to appropriate types
+    rows = args.rows
+    if isinstance(rows, str) and rows.isdigit():
+        rows = int(rows)
+
+    cols = args.cols
+    if isinstance(cols, str) and cols.isdigit():
+        cols = int(cols)
 
     try:
         viewer = PreViewData(
             input_file=args.input_file,
-            rows=args.rows,
-            cols=args.cols,
+            rows=rows,
+            cols=cols,
             output_info=args.output_info,
             sep=args.sep,
             sheet=args.sheet,
             show_dataset_overview=args.dataset_overview,
             show_column_info=args.column_info,
             show_numeric_stats=args.numeric_stats,
-            display_mode=args.display_mode,
         )
         viewer.view()
-
-    except (FileNotFoundError, ValueError, OSError) as e:
-        console = Console()
-        console.print(f"[bold red]Error:[/bold red] {e}")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 

@@ -160,20 +160,22 @@ def select_data(
 # Data viewing/profiling command
 @pre_group.command("view")
 @click.argument("input_file", type=click.Path(exists=True))
-@click.option("--rows", "-r", default="10", help="Number of rows to display or range (e.g., '50' or '10,60') (default: 10)")
 @click.option(
-    "--cols", "-c", default="25", help="Number of columns to display or range (e.g., '25' or '5,15') (default: 25)"
+    "--rows",
+    "-r",
+    default="10",
+    help="Number of rows to display, range (e.g., '10:60'), or multiple ranges (e.g., '1:10,50:60') (default: 10)",
+)
+@click.option(
+    "--cols",
+    "-c",
+    default="25",
+    help="Number of columns to display, range (e.g., '5:15'), or multiple ranges (e.g., '1:5,10:15') (default: 25)",
 )
 @click.option("--output-info", "--oi", help="If set will output information to a TOML file", default=False, is_flag=True)
 @click.option("--output-info-file", "--oif", help="Filename to output detailed info to TOML file", default="fileinfo.toml")
 @click.option("--sep", "-s", help="Custom separator for CSV files")
 @click.option("--sheet", help="Sheet name or number for Excel files")
-@click.option(
-    "--display-mode",
-    type=click.Choice(["auto", "normal", "rotated", "wrapped"]),
-    default="auto",
-    help="Display mode for data preview (default: auto)",
-)
 @click.option("--dataset-overview", "--do", is_flag=True, default=False, help="Show dataset overview only")
 @click.option("--column-info", "--ci", is_flag=True, default=False, help="Show column information only")
 @click.option("--numeric-stats", "--ns", is_flag=True, default=False, help="Show numeric statistics only")
@@ -185,7 +187,6 @@ def view_data(
     output_info_file: str | None,
     sep: str | None,
     sheet: str | None,
-    display_mode: str,
     dataset_overview: bool,
     column_info: bool,
     numeric_stats: bool,
@@ -201,15 +202,14 @@ def view_data(
 
     Args:
         input_file: Path to the input data file (CSV, Excel, TSV, etc.).
-        rows: Number of rows to display or range specification. Can be a number ("50")
-            or range ("10,60").
-        cols: Number of columns to display or range specification. Can be a number ("25")
-            or range ("5,15").
+        rows: Number of rows to display or range specification. Can be a number ("50"),
+            range ("10:60"), or multiple ranges ("1:10,50:60").
+        cols: Number of columns to display or range specification. Can be a number ("25"),
+            range ("5:15"), or multiple ranges ("1:5,10:15").
         output_info: If True, generates a detailed TOML report file.
         output_info_file: Custom filename for TOML report output.
         sep: Custom separator for CSV/delimited files (overrides auto-detection).
         sheet: Excel sheet name or number (0-based). If not specified, uses first sheet.
-        display_mode: Table layout mode. Options are "auto", "normal", "rotated", "wrapped".
         dataset_overview: If True, shows only dataset overview section (file info,
             shape, memory usage).
         column_info: If True, shows only column information section (data types,
@@ -230,7 +230,10 @@ def view_data(
             $ btools pre view data.csv
 
         Show specific range of rows and columns:
-            $ btools pre view data.csv --rows "10,100" --cols "5,15"
+            $ btools pre view data.csv --rows "10:100" --cols "5:15"
+
+        Show multiple ranges of rows and columns:
+            $ btools pre view data.csv --rows "1:10,50:60" --cols "1:5,10:15"
 
         Show only dataset overview:
             $ btools pre view data.csv --dataset-overview
@@ -240,9 +243,6 @@ def view_data(
 
         Show all analysis sections (no data preview):
             $ btools pre view data.csv --do --ci --ns
-
-        Force wrapped display mode for many columns:
-            $ btools pre view data.csv --cols "1,20" --display-mode wrapped
 
         Generate detailed TOML report:
             $ btools pre view data.csv --output-info --output-info-file analysis.toml
@@ -268,7 +268,6 @@ def view_data(
             show_dataset_overview=dataset_overview,
             show_column_info=column_info,
             show_numeric_stats=numeric_stats,
-            display_mode=display_mode,
         )
         viewer.view()
     except Exception as e:

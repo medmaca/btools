@@ -1,0 +1,21 @@
+ID,Name,Age,Score,Department,Salary,Years_Experience,City,Country,Email,Phone,Status,Manager,Project,Rating
+1,Employee_01,56,75.0,Engineering,100727,15,Tokyo,USA,employee01@company.com,+1-555-8967,Active,Alice Johnson,Project Gamma,4
+2,Employee_02,27,80.6,Sales,57041,10,London,UK,employee02@company.com,+1-555-6260,Active,Alice Johnson,Project Alpha,3
+3,Employee_03,53,77.6,Sales,42711,10,New York,Germany,employee03@company.com,+1-555-5534,On Leave,Carol Davis,Project Gamma,4
+4,Employee_04,58,62.0,Engineering,85660,16,New York,Australia,employee04@company.com,+1-555-2756,On Leave,Bob Smith,Project Alpha,1
+5,Employee_05,60,78.5,Operations,55539,2,New York,Japan,employee05@company.com,+1-555-3230,Active,Carol Davis,Project Alpha,2
+6,Employee_06,39,88.5,Operations,90370,8,Tokyo,Japan,employee06@company.com,+1-555-6862,Inactive,Alice Johnson,Project Gamma,3
+7,Employee_07,60,66.3,Engineering,104288,15,New York,USA,employee07@company.com,+1-555-7549,Active,David Wilson,Project Beta,4
+8,Employee_08,47,99.8,Sales,70394,14,New York,Germany,employee08@company.com,+1-555-9691,On Leave,Alice Johnson,Project Alpha,4
+9,Employee_09,42,92.5,Operations,46344,15,Sydney,USA,employee09@company.com,+1-555-1622,Active,Alice Johnson,Project Delta,4
+10,Employee_10,36,84.8,Finance,61629,15,Sydney,Germany,employee10@company.com,+1-555-6687,Active,David Wilson,Project Gamma,5
+11,Employee_11,61,83.0,Marketing,112763,2,New York,UK,employee11@company.com,+1-555-1815,Inactive,David Wilson,Project Beta,4
+12,Employee_12,28,92.3,Engineering,96161,11,London,UK,employee12@company.com,+1-555-3105,On Leave,Alice Johnson,Project Delta,1
+13,Employee_13,65,86.7,Operations,98481,17,Berlin,Canada,employee13@company.com,+1-555-7204,On Leave,Carol Davis,Project Gamma,5
+14,Employee_14,41,75.5,Operations,48671,9,New York,Japan,employee14@company.com,+1-555-7809,On Leave,Bob Smith,Project Delta,3
+15,Employee_15,47,93.6,Operations,45063,1,Berlin,Australia,employee15@company.com,+1-555-9427,On Leave,Carol Davis,Project Gamma,3
+16,Employee_16,59,92.2,Sales,69717,13,London,Canada,employee16@company.com,+1-555-6268,On Leave,David Wilson,Project Delta,3
+17,Employee_17,25,89.3,HR,48907,12,New York,Australia,employee17@company.com,+1-555-2442,Active,David Wilson,Project Alpha,4
+18,Employee_18,25,76.6,Finance,117397,11,Toronto,UK,employee18@company.com,+1-555-9873,On Leave,Bob Smith,Project Delta,5
+19,Employee_19,40,85.7,Finance,110102,15,Tokyo,Canada,employee19@company.com,+1-555-7439,On Leave,David Wilson,Project Beta,1
+20,Employee_20,25,89.0,Marketing,115307,6,Berlin,Germany,employee20@company.com,+1-555-6979,On Leave,Alice Johnson,Project Gamma,3
