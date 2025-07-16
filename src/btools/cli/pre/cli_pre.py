@@ -224,8 +224,9 @@ def view_data(
     with syntax highlighting and formatted tables.
 
     By default, shows only the data preview with both row and column numbers displayed
-    to help identify data positions. Row numbers appear in the first column, and column
-    numbers appear in the first row of the table.
+    to help identify data positions. Files are treated as raw data without headers,
+    so row 0 corresponds to the actual first line of the file. Column numbers appear
+    in the header row, and row numbers appear in the first column of the table.
 
     Args:
         input_file: Path to the input data file (CSV, Excel, TSV, etc.). Supports
@@ -259,6 +260,9 @@ def view_data(
             are provided, or unsupported file format is encountered.
 
     Note:
+        - Files are read as raw data without automatic header detection. Row 0 in the
+          data preview corresponds to the actual first line of the file, allowing for
+          accurate row numbering that matches file line positions.
         - Analysis section flags (--dataset-overview, --column-info, --numeric-stats)
           can be combined to show multiple sections. When any of these flags are used,
           the default data preview is suppressed.
@@ -269,10 +273,10 @@ def view_data(
         - All file formats are auto-detected unless custom separator is specified.
 
     Examples:
-        Basic usage - show data preview with row/column numbers:
+        Basic usage - show data preview with row/column numbers (row 0 = first file line):
             $ btools pre view data.csv
 
-        Show specific range of rows and columns:
+        Show specific range of rows and columns (all zero-based, inclusive):
             $ btools pre view data.csv --rows "10:100" --cols "5:15"
 
         Show multiple ranges of rows and columns:

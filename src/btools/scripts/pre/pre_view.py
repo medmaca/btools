@@ -250,45 +250,46 @@ class PreViewData:
             is_gzipped = _is_gzipped(self.input_file)
             true_extension = _get_true_file_extension(self.input_file)
 
-            # Custom separator handling
+            # Custom separator handling - read without headers
             if self.sep is not None:
                 if self.sep == "\\t":
                     if self.config.use_lazy_loading:
-                        return pl.scan_csv(self.input_file, separator="\t").collect()
+                        return pl.scan_csv(self.input_file, separator="\t", has_header=False).collect()
                     else:
-                        return pl.read_csv(self.input_file, separator="\t")
+                        return pl.read_csv(self.input_file, separator="\t", has_header=False)
                 else:
                     if self.config.use_lazy_loading:
-                        return pl.scan_csv(self.input_file, separator=self.sep).collect()
+                        return pl.scan_csv(self.input_file, separator=self.sep, has_header=False).collect()
                     else:
-                        return pl.read_csv(self.input_file, separator=self.sep)
+                        return pl.read_csv(self.input_file, separator=self.sep, has_header=False)
 
             # Auto-detect format based on true extension
+            # Read without headers to treat all rows as data
             if true_extension == ".csv":
                 if self.config.use_lazy_loading:
-                    return pl.scan_csv(self.input_file).collect()
+                    return pl.scan_csv(self.input_file, has_header=False).collect()
                 else:
-                    return pl.read_csv(self.input_file)
+                    return pl.read_csv(self.input_file, has_header=False)
             elif true_extension in [".xlsx", ".xls"]:
                 if is_gzipped:
                     raise ValueError(f"Gzipped Excel files are not supported: {self.input_file}")
 
                 # Excel files must be read eagerly
                 if self.sheet is not None:
-                    return pl.read_excel(self.input_file, sheet_name=self.sheet)
+                    return pl.read_excel(self.input_file, sheet_name=self.sheet, has_header=False)
                 else:
-                    return pl.read_excel(self.input_file)
+                    return pl.read_excel(self.input_file, has_header=False)
             elif true_extension == ".tsv":
                 if self.config.use_lazy_loading:
-                    return pl.scan_csv(self.input_file, separator="\t").collect()
+                    return pl.scan_csv(self.input_file, separator="\t", has_header=False).collect()
                 else:
-                    return pl.read_csv(self.input_file, separator="\t")
+                    return pl.read_csv(self.input_file, separator="\t", has_header=False)
             else:
                 # Default to CSV format
                 if self.config.use_lazy_loading:
-                    return pl.scan_csv(self.input_file).collect()
+                    return pl.scan_csv(self.input_file, has_header=False).collect()
                 else:
-                    return pl.read_csv(self.input_file)
+                    return pl.read_csv(self.input_file, has_header=False)
 
         except Exception as e:
             raise OSError(f"Error reading file {self.input_file}: {str(e)}") from e
@@ -573,31 +574,26 @@ class PreViewData:
             header_style="bold cyan",
         )
 
-        # Add row number column first
+        # Add row number column first with "Row" as header
         table.add_column("Row", style="dim yellow", max_width=8, overflow="ellipsis")
 
-        # Add all data columns
-        for col_name in display_df.columns:
-            # Truncate column name if needed for narrow columns
-            display_name = (
-                col_name[: col_width - 5] + "..." if col_width < 15 and len(col_name) > col_width - 2 else col_name
-            )
-            table.add_column(display_name, style="white", max_width=col_width, overflow="ellipsis")
-
-        # Add column number row (with empty cell for row number column)
+        # Add data columns using column numbers as headers
         if self.show_source_numbers and source_cols:
-            # Use original source column indices
-            col_numbers = [str(source_cols[i]) for i in range(len(display_df.columns))]
+            # Use original source column indices as headers
+            for i, _col_name in enumerate(display_df.columns):
+                col_header = f"#{source_cols[i]}" if i < len(source_cols) else f"#{start_col + i}"
+                table.add_column(col_header, style="white", max_width=col_width, overflow="ellipsis")
         else:
-            # Use sequential indices starting from start_col
-            col_numbers = [str(start_col + i) for i in range(len(display_df.columns))]
-        table.add_row("", *[f"[dim blue]#{num}[/dim blue]" for num in col_numbers])
+            # Use sequential indices starting from start_col as headers
+            for i, _col_name in enumerate(display_df.columns):
+                col_header = f"#{start_col + i}"
+                table.add_column(col_header, style="white", max_width=col_width, overflow="ellipsis")
 
-        # Add data rows with row numbers
+        # Add data rows with correct row numbers (starting from 0 for first data row)
         max_cell_len = max(6, col_width - 2)
         for row_idx, row in enumerate(display_df.iter_rows()):
             formatted_row: list[str] = []
-            # Add row number as first column (using source indices if flag is set)
+            # Add row number as first column (0-based for actual data rows)
             if self.show_source_numbers and source_rows:
                 actual_row_num = source_rows[row_idx] if row_idx < len(source_rows) else start_row + row_idx
             else:
