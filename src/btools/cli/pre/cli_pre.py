@@ -194,7 +194,7 @@ def select_data(
     help="Number of columns to display, range (e.g., '5:15'), or multiple ranges (e.g., '1:5,10:15') (default: 25)",
 )
 @click.option("--output-info", "--oi", help="If set will output information to a TOML file", default=False, is_flag=True)
-@click.option("--output-info-file", "--oif", help="Filename to output detailed info to TOML file", default="fileinfo.toml")
+@click.option("--output-info-file", "--oif", help="Filename to output detailed info to TOML file", default=None)
 @click.option("--sep", "-s", help="Custom separator for CSV files")
 @click.option("--sheet", help="Sheet name or number for Excel files")
 @click.option(
@@ -331,6 +331,8 @@ def view_data(
         output_info_path: str | None = None
         if output_info and output_info_file:
             output_info_path = os.path.join(os.path.dirname(input_file), output_info_file)
+        elif output_info:
+            output_info_path = os.path.join(os.path.dirname(input_file), input_file + "_info.toml")
 
         viewer = PreViewData(
             input_file=input_file,

@@ -231,6 +231,63 @@ class PreViewData:
         self.console = Console()
         self.config = ViewConfig()
 
+    def _make_col_unique(self, column_list: list[str]) -> list[str]:
+        """Ensure column names are unique by appending suffixes if necessary."""
+        seen: set[str] = set()
+        unique_columns: list[str] = []
+        for col in column_list:
+            base_col = col
+            suffix = 0
+            while col in seen:
+                col = f"{base_col}_{suffix}"
+                suffix += 1
+            seen.add(col)
+            unique_columns.append(col)
+        return unique_columns
+
+    def _convert_col_types_to_appropriate(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Convert string columns to int or float if all non-null values can be converted."""
+
+        def _is_float_like(val: Any) -> bool:
+            try:
+                float(val)
+                return True
+            except Exception:
+                return False
+
+        new_df = df.clone()
+        for col in new_df.columns:
+            s = new_df[col]
+            # Only attempt conversion for string columns
+            if s.dtype == pl.String:
+                # Drop nulls for conversion check
+                non_null = s.drop_nulls().to_list()
+                if not non_null:
+                    continue  # All nulls, skip
+                # Try int conversion
+                try:
+                    if all(str(x).isdigit() or (str(x).startswith("-") and str(x)[1:].isdigit()) for x in non_null):
+                        new_df = new_df.with_columns(pl.col(col).cast(pl.Int64))
+                        continue
+                except Exception:
+                    pass
+                # Try float conversion (including mixed ints and floats)
+                try:
+                    # Accept if all values are either int-like or float-like
+                    def is_numeric_like(val: Any) -> bool:
+                        try:
+                            float(val)
+                            return True
+                        except Exception:
+                            return False
+
+                    if all(is_numeric_like(x) for x in non_null):
+                        new_df = new_df.with_columns(pl.col(col).cast(pl.Float64))
+                        continue
+                except Exception:
+                    pass
+        return new_df
+
     def _read_data(self) -> pl.DataFrame:
         """Read data from the input file using Polars with headers for analysis.
 
@@ -285,6 +342,21 @@ class PreViewData:
                     return pl.scan_csv(self.input_file, separator="\t").collect()
                 else:
                     return pl.read_csv(self.input_file, separator="\t")
+            elif true_extension == ".parquet":
+                if self.config.use_lazy_loading:
+                    tmp_df = pl.scan_parquet(self.input_file).collect()
+                    # Move first row to header
+                    if tmp_df.height > 0:
+                        tmp_df.columns = self._make_col_unique(list(tmp_df.row(0)))
+                        # Remove the first row after moving to header
+                        return self._convert_col_types_to_appropriate(tmp_df.slice(1))
+
+                else:
+                    tmp_df = pl.read_parquet(self.input_file)
+                    if tmp_df.height > 0:
+                        tmp_df.columns = self._make_col_unique(list(tmp_df.row(0)))
+                        # Remove the first row after moving to header
+                        return self._convert_col_types_to_appropriate(tmp_df.slice(1))
             else:
                 # Default to CSV format
                 if self.config.use_lazy_loading:
@@ -349,6 +421,11 @@ class PreViewData:
                     return pl.scan_csv(self.input_file, separator="\t", has_header=False).collect()
                 else:
                     return pl.read_csv(self.input_file, separator="\t", has_header=False)
+            elif true_extension == ".parquet":
+                if self.config.use_lazy_loading:
+                    return pl.scan_parquet(self.input_file).collect()
+                else:
+                    return pl.read_parquet(self.input_file)
             else:
                 # Default to CSV format
                 if self.config.use_lazy_loading:
